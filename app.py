@@ -23,7 +23,7 @@ st.markdown("---")
 def load_data():
     try:
         # Cargar el CSV con low_memory=False para evitar problemas con tipos de datos mixtos
-        df = pd.read_csv('data/dataset_corregido_v2b_anom.csv', low_memory=False)
+        df = pd.read_csv('data/dataset_corregido_v2b_anom2.csv', low_memory=False)
        
         # Convertir columnas de fecha a datetime 
         date_columns = ['fecha_ingreso', 'fecha_nacimiento', 'fecha_toma_muestra',
