@@ -43,7 +43,7 @@ def load_data():
                 # Mapear específicamente VERDADERO y FALSO
                 df[col] = df[col].map({'VERDADERO': True, 'FALSO': False})
                 # Convertir NaN a False
-                df[col] = df[col].fillna(False)
+                #df[col] = df[col].fillna(False)
        
         # Manejar valores nulos en columnas numéricas clave
         df['tsh_neonatal'] = pd.to_numeric(df['tsh_neonatal'], errors='coerce').fillna(0)
@@ -304,7 +304,7 @@ with tabs[0]:
         # Distribución por prematuridad
         premature_counts = filtered_df.groupby(['prematuro', 'confirmado_hipotiroidismo']).size().unstack(fill_value=0)
         #print(premature_counts)
-        print(filtered_df[['prematuro', 'confirmado_hipotiroidismo']].head())
+        #print(filtered_df[['prematuro', 'confirmado_hipotiroidismo']].head())
         # Asegurarse de que haya exactamente 2 columnas (False y True)
         if False not in premature_counts.columns:
             premature_counts[False] = 0  # Agregar columna para casos no confirmados
@@ -854,7 +854,7 @@ with tabs[4]:
                             from_=from_phone_number,
                             to=telefono
                         )
-                        print(telefono)
+                        #print(telefono)
                         
                         # Actualizar status en el log
                         st.session_state.sms_log[-1]['status'] = "Enviado"
@@ -959,12 +959,12 @@ with tabs[4]:
                                     )
                                     message_sid = message.sid
                                     status = "Enviado"
-                                    print(telefono)
+                                    #print(telefono)
                                 else:
                                     # En modo de prueba, simular éxito
                                     message_sid = f"TEST-{i}"
                                     status = "Prueba"
-                                    print(telefono)
+                                    #print(telefono)
                                 
                                 # Registrar mensaje en el historial
                                 st.session_state.setdefault('sms_log', []).append({
