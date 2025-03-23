@@ -533,13 +533,11 @@ with tabs[2]:
         title='Evolución Temporal de Casos de Hipotiroidismo Congénito',
         xaxis_title='Fecha',
         yaxis=dict(
-            title='Número de Casos',
-            titlefont=dict(color='#FF4500'),
+            title={'text': 'Número de Casos', 'font': {'color': '#FF4500'}},  # Corrección aquí
             tickfont=dict(color='#FF4500')
         ),
         yaxis2=dict(
-            title='Tasa de Confirmación',
-            titlefont=dict(color='#4682B4'),
+            title={'text': 'Tasa de Confirmación', 'font': {'color': '#4682B4'}},  # Corrección aquí
             tickfont=dict(color='#4682B4'),
             anchor='x',
             overlaying='y',
