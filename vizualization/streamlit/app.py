@@ -272,7 +272,7 @@ def buscar_por_ficha(ficha: str) -> pd.Series | None:
     df = leer_registros()
     if df.empty:
         return None
-    match = df[df["No de ficha"].str.strip() == ficha.strip()]
+    match = df[df["ficha_id"].str.strip() == ficha.strip()]
     if match.empty:
         return None
     return match.iloc[0]
@@ -489,20 +489,20 @@ with tab_form:
                 # ── Tarjeta resumen del paciente ──────────────────────────────
                 st.markdown('<div class="form-section">👤  Paciente encontrado</div>', unsafe_allow_html=True)
                 ci1, ci2, ci3, ci4 = st.columns(4)
-                ci1.metric("Ficha", reg.get("No de ficha", "—"))
-                ci2.metric("Paciente", f"{reg.get('Primer Apellido','')} {reg.get('Segundo Apellido','')}")
-                ci3.metric("Fecha nacimiento", reg.get("Fecha de Nacimiento", "—"))
-                ci4.metric("Institución", reg.get("Institucion", "—"))
+                ci1.metric("Ficha", reg.get("ficha_id", "—"))
+                ci2.metric("Paciente", f"{reg.get('apellido_1','')} {reg.get('Segundo Apellido','')}")
+                ci3.metric("Fecha nacimiento", reg.get("fecha_nacimiento", "—"))
+                ci4.metric("Institución", reg.get("institucion", "—"))
 
                 ci5, ci6, ci7, ci8 = st.columns(4)
-                ci5.metric("Ciudad", reg.get("Ciudad", "—"))
-                ci6.metric("ARS", reg.get("ARS", "—"))
-                ci7.metric("Tipo muestra", reg.get("Tipo de muestra", "—"))
-                ci8.metric("Fecha toma", reg.get("Fecha toma de la muestra", "—"))
+                ci5.metric("Ciudad", reg.get("ciudad", "—"))
+                ci6.metric("ARS", reg.get("ars", "—"))
+                ci7.metric("Tipo muestra", reg.get("tipo_muestra", "—"))
+                ci8.metric("Fecha toma", reg.get("fecha_toma_muestra", "—"))
 
                 # Estado actual del registro
-                tsh1_actual = reg.get("Resultados TSH neonatal", "").strip()
-                tsh2_actual = reg.get("Resultado toma de muestra 2", "").strip()
+                tsh1_actual = reg.get("tsh_neonatal", "").strip()
+                tsh2_actual = reg.get("fecha_resultado_muestra_2", "").strip()
                 ya_tiene_tsh1 = tsh1_actual not in ("", "0")
                 ya_tiene_tsh2 = tsh2_actual not in ("", "0")
 
