@@ -305,8 +305,9 @@ with tab_form:
         c1, c2, c3 = st.columns(3)
         with c1:
             ficha         = st.text_input("★ No. de Ficha", placeholder="369980", key="n_ficha")
-            fecha_ingreso = st.text_input("★ Fecha de Ingreso", placeholder="5-May-19",
-                                          help="5-May-19 | 05/05/2019 | 2019-05-05", key="n_fi")
+            fecha_ingreso = st.date_input("★ Fecha de Ingreso", value=None,
+                                          min_value=date(2000, 1, 1), max_value=date.today(),
+                                          key="n_fi")
             institucion   = st.text_input("★ Institución", placeholder="VICTORIA", key="n_inst")
         with c2:
             ars           = st.text_input("★ ARS / EPS", placeholder="MEDIMAS", key="n_ars")
@@ -336,7 +337,9 @@ with tab_form:
             apellido2 = st.text_input("Segundo Apellido", key="n_ap2")
         with c7:
             nombre    = st.text_input("★ Nombre / Hijo(a) de", key="n_nom")
-            fecha_nac = st.text_input("★ Fecha de Nacimiento", placeholder="5-May-19", key="n_fnac")
+            fecha_nac = st.date_input("★ Fecha de Nacimiento", value=None,
+                                      min_value=date(2000, 1, 1), max_value=date.today(),
+                                      key="n_fnac")
         with c8:
             peso      = st.text_input("★ Peso al nacer (g)", placeholder="2890", key="n_peso")
             sexo      = st.selectbox("★ Sexo",
@@ -361,14 +364,18 @@ with tab_form:
             destino       = st.selectbox("★ Destino muestra",
                                          ["Seleccionar...", "ACEPTADA", "RECHAZADA"], key="n_dest")
         with c12:
-            fecha_muestra1 = st.text_input("★ Fecha toma muestra", placeholder="5-May-19", key="n_fm1")
+            fecha_muestra1 = st.date_input("★ Fecha toma muestra", value=None,
+                                           min_value=date(2000, 1, 1), max_value=date.today(),
+                                           key="n_fm1")
         with c13:
             tipo_vinc_m = ""  # placeholder — vinculación ya capturada arriba
 
         # Muestra rechazada (opcional)
         with st.expander("❌  Muestra rechazada (si aplica)"):
             m_rechazada      = st.checkbox("¿Hubo muestra rechazada?", key="n_mrech")
-            fecha_rechaz     = st.text_input("Fecha toma rechazada", key="n_frech")
+            fecha_rechaz     = st.date_input("Fecha toma rechazada", value=None,
+                                              min_value=date(2000, 1, 1), max_value=date.today(),
+                                              key="n_frech")
 
         # ── Botón guardar ─────────────────────────────────────────────────────
         st.markdown("---")
@@ -393,18 +400,20 @@ with tab_form:
                 if not val or val == "Seleccionar...":
                     errors.append(f"**{label}** es obligatorio")
 
-            # Fechas
-            d_fi, e = val_fecha(fecha_ingreso, "Fecha de ingreso")
-            if e: errors.append(e)
-            d_fn, e = val_fecha(fecha_nac, "Fecha de Nacimiento")
-            if e: errors.append(e)
+            # Fechas — ya son objetos date, solo verificar que se seleccionaron
+            d_fi = fecha_ingreso  # date object o None
+            d_fn = fecha_nac      # date object o None
+            if d_fi is None:
+                errors.append("**Fecha de Ingreso** es obligatoria")
+            if d_fn is None:
+                errors.append("**Fecha de Nacimiento** es obligatoria")
             if d_fi and d_fn:
                 if d_fn > d_fi:
                     errors.append("Fecha de nacimiento no puede ser posterior a la fecha de ingreso")
                 if (date.today() - d_fn).days > 365:
                     errors.append("Fecha de nacimiento inusual (más de 1 año atrás)")
-            _, e = val_fecha(fecha_muestra1, "Fecha toma muestra")
-            if e: errors.append(e)
+            if fecha_muestra1 is None:
+                errors.append("**Fecha toma muestra** es obligatoria")
 
             # Peso
             v_peso, e = val_peso(peso)
@@ -423,7 +432,7 @@ with tab_form:
                 row.update({
                     "id":                       next_id(),
                     "ficha_id":                 ficha.strip(),
-                    "fecha_ingreso":            fecha_ingreso.strip(),
+                    "fecha_ingreso":            fecha_ingreso.isoformat() if fecha_ingreso else "",
                     "institucion":              institucion.strip(),
                     "ars":                      ars.strip(),
                     "historia_clinica":         historia.strip(),
@@ -437,7 +446,7 @@ with tab_form:
                     "apellido_1":               apellido1.strip(),
                     "apellido_2":               apellido2.strip(),
                     "nombre_hijo":              nombre.strip(),
-                    "fecha_nacimiento":         fecha_nac.strip(),
+                    "fecha_nacimiento":         fecha_nac.isoformat() if fecha_nac else "",
                     "peso":                     v_peso,
                     "sexo":                     sexo,
                     "prematuro":                "VERDADERO" if prematuro else "FALSO",
@@ -446,9 +455,9 @@ with tab_form:
                     "muestra_adecuada":         "VERDADERO" if muestra_adec else "FALSO",
                     "destino_muestra":          destino,
                     "tipo_muestra":             tipo_muestra1,
-                    "fecha_toma_muestra":       fecha_muestra1.strip(),
+                    "fecha_toma_muestra":       fecha_muestra1.isoformat() if fecha_muestra1 else "",
                     "muestra_rechazada":        "VERDADERO" if m_rechazada else "FALSO",
-                    "fecha_toma_rechazada":     fecha_rechaz.strip() if m_rechazada else "",
+                    "fecha_toma_rechazada":     fecha_rechaz.isoformat() if fecha_rechaz else "",
                     "tipo_vinculacion":         tipo_vinc,
                     "contador":                 "0",
                 })
@@ -516,10 +525,11 @@ with tab_form:
 
                 r1, r2, r3 = st.columns(3)
                 with r1:
-                    fecha_result1 = st.text_input(
+                    fecha_result1 = st.date_input(
                         "★ Fecha de resultado",
-                        value=reg.get("fecha_resultado", ""),
-                        placeholder="6-May-19", key="r_fres1",
+                        value=pd.to_datetime(reg.get("fecha_resultado") or None, errors="coerce"),
+                        min_value=date(2000, 1, 1), max_value=date.today(),
+                        key="r_fres1",
                     )
                 with r2:
                     tsh1_str = st.text_input(
@@ -568,12 +578,14 @@ with tab_form:
                                                ["Seleccionar...", "CORDON", "TALON", "VENA"],
                                                key="r_tm2")
                     with m2b:
-                        fecha_m2 = st.text_input("★ Fecha toma muestra 2",
-                                                 value=reg.get("fecha_toma_muestra_2", ""),
-                                                 placeholder="5-May-19", key="r_fm2")
-                        f_res2   = st.text_input("★ Fecha resultado 2",
-                                                 value=reg.get("fecha_resultado_muestra_2", ""),
-                                                 placeholder="6-May-19", key="r_fr2")
+                        fecha_m2 = st.date_input("★ Fecha toma muestra 2",
+                                                 value=pd.to_datetime(reg.get("fecha_toma_muestra_2") or None, errors="coerce"),
+                                                 min_value=date(2000, 1, 1), max_value=date.today(),
+                                                 key="r_fm2")
+                        f_res2   = st.date_input("★ Fecha resultado 2",
+                                                 value=pd.to_datetime(reg.get("fecha_resultado_muestra_2") or None, errors="coerce"),
+                                                 min_value=date(2000, 1, 1), max_value=date.today(),
+                                                 key="r_fr2")
                     with m2c:
                         tsh2_str = st.text_input("★ Resultado TSH 2 (µIU/mL)",
                                                  value=tsh2_actual if ya_tiene_tsh2 else "",
@@ -637,8 +649,8 @@ with tab_form:
                     errors = []
 
                     # Fecha resultado 1
-                    d_r1, e = val_fecha(fecha_result1, "Fecha resultado 1")
-                    if e: errors.append(e)
+                    if fecha_result1 is None:
+                        errors.append("Fecha resultado 1 es obligatoria")
 
                     # TSH 1
                     v_tsh1, e = val_tsh(tsh1_str, "TSH 1")
@@ -651,10 +663,10 @@ with tab_form:
                         if e: errors.append(e)
                         if not tipo_m2 or tipo_m2 == "Seleccionar...":
                             errors.append("Tipo de muestra 2 es obligatorio")
-                        _, e = val_fecha(fecha_m2, "Fecha toma muestra 2")
-                        if e: errors.append(e)
-                        _, e = val_fecha(f_res2, "Fecha resultado 2")
-                        if e: errors.append(e)
+                        if fecha_m2 is None:
+                            errors.append("Fecha toma muestra 2 es obligatoria")
+                        if f_res2 is None:
+                            errors.append("Fecha resultado 2 es obligatoria")
 
                     if errors:
                         st.error(f"**{len(errors)} error(es):**")
@@ -663,15 +675,15 @@ with tab_form:
                     else:
                         # Campos a actualizar
                         campos_actualizar = {
-                            "fecha_resultado":      fecha_result1.strip(),
+                            "fecha_resultado":      fecha_result1.isoformat() if fecha_result1 else "",
                             "tsh_neonatal":         v_tsh1,
                         }
                         if necesita_m2 and v_tsh2 is not None:
                             campos_actualizar.update({
                                 "ficha_id_2":               ficha2.strip() or "0",
                                 "tipo_muestra_2":           tipo_m2,
-                                "fecha_toma_muestra_2":     fecha_m2.strip(),
-                                "fecha_resultado_muestra_2":f_res2.strip(),
+                                "fecha_toma_muestra_2":     fecha_m2.isoformat() if fecha_m2 else "",
+                                "fecha_resultado_muestra_2":f_res2.isoformat() if f_res2 else "",
                                 "resultado_muestra_2":      v_tsh2,
                                 "contador":                 "1",
                             })
