@@ -122,6 +122,14 @@ departamento_seleccionado = st.sidebar.multiselect(
     default=departamentos
 )
 
+# Filtro por ciudad
+ciudades = sorted(df['ciudad'].unique().tolist())
+ciudad_seleccionado = st.sidebar.multiselect(
+    "Ciudad:",
+    options=ciudades,
+    default=ciudades
+)
+
 # Filtro por estado de hipotiroidismo
 hipotiroidismo_opciones = ["Todos", "Sospechosos", "Confirmados", "Normales"]
 hipotiroidismo_seleccionado = st.sidebar.radio("Estado de Hipotiroidismo:", hipotiroidismo_opciones)
@@ -145,6 +153,9 @@ if tipo_muestra_seleccionado:
 
 if departamento_seleccionado:
     filtered_df = filtered_df[filtered_df['departamento'].isin(departamento_seleccionado)]
+
+if ciudad_seleccionado:
+    filtered_df = filtered_df[filtered_df['ciudad'].isin(ciudad_seleccionado)]
 
 # Aplicar filtro de estado de hipotiroidismo
 if hipotiroidismo_seleccionado == "Sospechosos":
@@ -347,18 +358,66 @@ with tabs[0]:
     if 'departamento' in filtered_df.columns:
         department_counts = filtered_df.groupby('departamento')['confirmado_hipotiroidismo'].sum().reset_index()
         department_counts.columns = ['Departamento', 'Casos Confirmados']
+
+
+
+        import plotly.express as px
+        import json
+        import pandas as pd
+
+
+        # 1. Cargar el GeoJSON
+        with open('bogota.geojson', encoding='utf-8') as f:
+            geojson_data = json.load(f)
+
+        # --- PASO CRUCIAL: Normalizar nombres ---
+        # Para que tu "Bogota" del CSV coincida con el nombre largo del GeoJSON
+        for feature in geojson_data['features']:
+            if "Bogotá" in feature['properties'].get('name', ''):
+                feature['properties']['name'] = "Bogota" # Lo igualamos a tu columna 'ciudad'
+
+        # 2. Agrupamos los datos (asegúrate de usar 'ciudad' si quieres pintar Bogotá)
+        if 'ciudad' in filtered_df.columns:
+            # Agrupamos por ciudad para que sume los casos de todos los registros de "Bogota"
+            city_counts = filtered_df.groupby('ciudad')['confirmado_hipotiroidismo'].sum().reset_index()
+
+            # 3. Crear el mapa interactivo
+            fig_map = px.choropleth(
+                city_counts,                    # Usamos el dataframe agrupado
+                geojson=geojson_data,
+                locations="ciudad",             # Tu columna se llama 'ciudad'
+                featureidkey="properties.name", # Ahora coincide gracias al bucle de arriba
+                color="confirmado_hipotiroidismo",
+                color_continuous_scale="Reds",
+                title="Distribución Geográfica de Casos",
+                labels={'confirmado_hipotiroidismo': 'Casos Confirmados'}
+            )
+
+            # 4. Ajustar el zoom
+            fig_map.update_geos(
+                fitbounds="locations", 
+                visible=False
+            )
+
+            fig_map.update_layout(
+                margin={"r":0,"t":50,"l":0,"b":0},
+                paper_bgcolor="white"
+            )
+
+            st.plotly_chart(fig_map, use_container_width=True)
+
+
+        # fig_map = px.choropleth(
+        #     department_counts,
+        #     locations="Departamento",
+        #     locationmode="country names",
+        #     color="Casos Confirmados",
+        #     hover_name="Departamento",
+        #     color_continuous_scale=px.colors.sequential.Reds,
+        #     title="Distribución Geográfica de Casos Confirmados"
+        # )
         
-        fig_map = px.choropleth(
-            department_counts,
-            locations="Departamento",
-            locationmode="country names",
-            color="Casos Confirmados",
-            hover_name="Departamento",
-            color_continuous_scale=px.colors.sequential.Reds,
-            title="Distribución Geográfica de Casos Confirmados"
-        )
-        
-        st.plotly_chart(fig_map, use_container_width=True)
+        # st.plotly_chart(fig_map, use_container_width=True)
 
 with tabs[1]:
     st.header("📊 Análisis de TSH Neonatal")
@@ -437,21 +496,34 @@ with tabs[1]:
     
     with col1:
         st.subheader("TSH por Sexo")
+        
         fig_box_sex = px.box(
             filtered_df,
             x='sexo',
             y='tsh_neonatal',
             color='sexo',
             points="outliers",
-            labels={'sexo': 'Sexo', 'tsh_neonatal': 'TSH Neonatal (mIU/L)'}
+            labels={'sexo': 'Sexo', 'tsh_neonatal': 'TSH Neonatal (mIU/L)'},
+            # OPCIÓN A: Escala logarítmica (evita el aplanamiento de forma matemática)
+            # log_y=True 
         )
         
+        # OPCIÓN B: Limitar el rango del eje Y manualmente (evita el aplanamiento visual)
+        # Ajustamos el rango de 0 a un poco más del umbral (ej. 30) o el percentil 95
+        fig_box_sex.update_yaxes(range=[0, 40]) 
+
         fig_box_sex.add_hline(
             y=15, 
             line_dash="dash", 
             line_color="red",
             annotation_text="Umbral: 15 mIU/L",
             annotation_position="top right"
+        )
+
+        # Mejorar la estética para que no se vea "apretado"
+        fig_box_sex.update_layout(
+            height=500,  # Forzar una altura fija ayuda a que no se vea aplanado
+            margin=dict(l=20, r=20, t=40, b=20)
         )
         
         st.plotly_chart(fig_box_sex, use_container_width=True)
