@@ -5,6 +5,9 @@ import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
 
+import folium
+from streamlit_folium import st_folium
+
 # Configuración de la página
 st.set_page_config(
     page_title="Dashboard de Hipotiroidismo Congénito",
@@ -62,6 +65,39 @@ def load_data():
         return pd.DataFrame()
 
 df = load_data()
+
+
+def graficar_mapa_casos(df):
+
+    # Diccionario de coordenadas para tus ciudades
+    city_coordinates = {
+        "Bogota": [4.6097, -74.0817],
+        "Cundinamarca": [4.7000, -73.8000], # Coordenada central aproximada
+        # Agrega aquí más ciudades según aparezcan en tu columna 'ciudad'
+    }
+
+    # Centrado en Colombia (o cerca de Bogotá para tu GeoJSON)
+    m = folium.Map(location=[4.6097, -74.0817], zoom_start=6, tiles="cartodbpositron")
+    
+    # Agrupamos por 'ciudad' y sumamos 'confirmado_hipotiroidismo'
+    # Nota: Asegúrate de que 'confirmado_hipotiroidismo' sea numérico (0 y 1)
+    df_grouped = df.groupby('ciudad')['confirmado_hipotiroidismo'].sum().items()
+    
+    for city, casos in df_grouped:
+        if city in city_coordinates:
+            # Solo ponemos marcador si hay al menos 1 caso o para todas las ciudades
+            folium.Marker(
+                location=city_coordinates[city],
+                popup=f"<b>{city}</b><br>Casos Confirmados: {int(casos)}",
+                tooltip=city,
+                icon=folium.Icon(color='red', icon='plus-square', prefix='fa')
+            ).add_to(m)
+        else:
+            # Opcional: mostrar advertencia si falta una coordenada
+            pass
+
+    # Mostrar en Streamlit
+    st_folium(m, width=700, height=500)
 
 # Verificar que los datos se cargaron correctamente
 if df.empty:
@@ -354,70 +390,9 @@ with tabs[0]:
         # Mostrar el gráfico en Streamlit
         st.plotly_chart(fig_premature, use_container_width=True)
 
-    # Mapa de calor de casos por departamento
-    if 'departamento' in filtered_df.columns:
-        department_counts = filtered_df.groupby('departamento')['confirmado_hipotiroidismo'].sum().reset_index()
-        department_counts.columns = ['Departamento', 'Casos Confirmados']
 
+    graficar_mapa_casos(filtered_df)
 
-
-        import plotly.express as px
-        import json
-        import pandas as pd
-
-
-        # 1. Cargar el GeoJSON
-        with open('bogota.geojson', encoding='utf-8') as f:
-            geojson_data = json.load(f)
-
-        # --- PASO CRUCIAL: Normalizar nombres ---
-        # Para que tu "Bogota" del CSV coincida con el nombre largo del GeoJSON
-        for feature in geojson_data['features']:
-            if "Bogotá" in feature['properties'].get('name', ''):
-                feature['properties']['name'] = "Bogota" # Lo igualamos a tu columna 'ciudad'
-
-        # 2. Agrupamos los datos (asegúrate de usar 'ciudad' si quieres pintar Bogotá)
-        if 'ciudad' in filtered_df.columns:
-            # Agrupamos por ciudad para que sume los casos de todos los registros de "Bogota"
-            city_counts = filtered_df.groupby('ciudad')['confirmado_hipotiroidismo'].sum().reset_index()
-
-            # 3. Crear el mapa interactivo
-            fig_map = px.choropleth(
-                city_counts,                    # Usamos el dataframe agrupado
-                geojson=geojson_data,
-                locations="ciudad",             # Tu columna se llama 'ciudad'
-                featureidkey="properties.name", # Ahora coincide gracias al bucle de arriba
-                color="confirmado_hipotiroidismo",
-                color_continuous_scale="Reds",
-                title="Distribución Geográfica de Casos",
-                labels={'confirmado_hipotiroidismo': 'Casos Confirmados'}
-            )
-
-            # 4. Ajustar el zoom
-            fig_map.update_geos(
-                fitbounds="locations", 
-                visible=False
-            )
-
-            fig_map.update_layout(
-                margin={"r":0,"t":50,"l":0,"b":0},
-                paper_bgcolor="white"
-            )
-
-            st.plotly_chart(fig_map, use_container_width=True)
-
-
-        # fig_map = px.choropleth(
-        #     department_counts,
-        #     locations="Departamento",
-        #     locationmode="country names",
-        #     color="Casos Confirmados",
-        #     hover_name="Departamento",
-        #     color_continuous_scale=px.colors.sequential.Reds,
-        #     title="Distribución Geográfica de Casos Confirmados"
-        # )
-        
-        # st.plotly_chart(fig_map, use_container_width=True)
 
 with tabs[1]:
     st.header("📊 Análisis de TSH Neonatal")
