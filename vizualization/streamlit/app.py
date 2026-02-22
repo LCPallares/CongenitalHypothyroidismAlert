@@ -88,18 +88,17 @@ PESO_MIN, PESO_MAX = 400, 8000
 TSH_CORTE = 15.0          # umbral clínico del cliente
 
 FIELDNAMES = [
-    "Id", "No de ficha", "Fecha de ingreso", "Institucion", "ARS",
-    "Historia clinica", "Tipo de Documento", "Numero de Documento",
-    "Ciudad", "Departamento", "Telefono uno", "Telefono dos", "Direccion",
-    "Primer Apellido", "Segundo Apellido", "Nombre Hijo de",
-    "Fecha de Nacimiento", "Peso", "Sexo", "Prematuro", "Transfundido",
-    "Informacion completa", "Muestra adecuada", "Destino muestra",
-    "Tipo de muestra", "Fecha toma de la muestra", "Fecha de resultado",
-    "Resultados TSH neonatal", "No de ficha dos", "Tipo de muestra 2",
-    "Fecha toma de la muestra 2", "Fecha resultado muestra 2",
-    "Resultado toma de muestra 2", "Contador", "muestra rechazada",
-    "Fecha toma rechazada", "Tipo de Vinculacion", "Resultado Rechazada",
-    "Fecha resultado rechazada",
+    "id", "ficha_id", "fecha_ingreso", "institucion", "ars",
+    "historia_clinica", "tipo_documento", "numero_documento",
+    "ciudad", "departamento", "telefono_1", "telefono_2", "direccion",
+    "apellido_1", "apellido_2", "nombre_hijo",
+    "fecha_nacimiento", "peso", "sexo", "prematuro", "transfundido",
+    "informacion_completa", "muestra_adecuada", "destino_muestra",
+    "tipo_muestra", "fecha_toma_muestra", "fecha_resultado", "tsh_neonatal",
+    "ficha_id_2", "tipo_muestra_2", "fecha_toma_muestra_2",
+    "fecha_resultado_muestra_2", "resultado_muestra_2", "contador",
+    "muestra_rechazada", "fecha_toma_rechazada", "tipo_vinculacion",
+    "resultado_rechazada", "fecha_resultado_rechazada",
 ]
 
 DEPARTAMENTOS = [
@@ -154,7 +153,7 @@ def next_id():
     if not rows:
         return 1
     try:
-        return max(int(r.get("Id", 0)) for r in rows) + 1
+        return max(int(r.get("id", 0)) for r in rows) + 1
     except Exception:
         return len(rows) + 1
 
@@ -259,16 +258,16 @@ def leer_registros() -> pd.DataFrame:
     return df
 
 def actualizar_registro(id_registro: int, campos: dict):
-    """Sobreescribe los campos indicados en la fila con el Id dado."""
+    """Sobreescribe los campos indicados en la fila con el id dado."""
     df = leer_registros()
-    mask = df["Id"].astype(str) == str(id_registro)
+    mask = df["id"].astype(str) == str(id_registro)
     for col, val in campos.items():
         if col in df.columns:
             df.loc[mask, col] = str(val)
     df.to_csv(CSV_REGISTROS, index=False)
 
 def buscar_por_ficha(ficha: str) -> pd.Series | None:
-    """Retorna la fila (Series) cuyo 'No de ficha' == ficha, o None."""
+    """Retorna la fila cuyo 'ficha_id' == ficha, o None."""
     df = leer_registros()
     if df.empty:
         return None
@@ -411,7 +410,6 @@ with tab_form:
             v_peso, e = val_peso(peso)
             if e: errors.append(e)
 
-            # Verificar que no exista ya esa ficha
             if ficha.strip() and buscar_por_ficha(ficha):
                 errors.append(f"Ya existe un registro con la ficha **{ficha}**. "
                                f"Para cargar resultados usa el modo 'Cargar resultados de laboratorio'.")
@@ -423,39 +421,39 @@ with tab_form:
             else:
                 row = {f: "" for f in FIELDNAMES}
                 row.update({
-                    "Id":                        next_id(),
-                    "No de ficha":               ficha.strip(),
-                    "Fecha de ingreso":          fecha_ingreso.strip(),
-                    "Institucion":               institucion.strip(),
-                    "ARS":                       ars.strip(),
-                    "Historia clinica":          historia.strip(),
-                    "Tipo de Documento":         tipo_doc,
-                    "Numero de Documento":       num_doc.strip(),
-                    "Ciudad":                    ciudad.strip(),
-                    "Departamento":              departamento,
-                    "Telefono uno":              tel1.strip() or "0",
-                    "Telefono dos":              tel2.strip() or "0",
-                    "Direccion":                 direccion.strip(),
-                    "Primer Apellido":           apellido1.strip(),
-                    "Segundo Apellido":          apellido2.strip(),
-                    "Nombre Hijo de":            nombre.strip(),
-                    "Fecha de Nacimiento":       fecha_nac.strip(),
-                    "Peso":                      v_peso,
-                    "Sexo":                      sexo,
-                    "Prematuro":                 "VERDADERO" if prematuro else "FALSO",
-                    "Transfundido":              "VERDADERO" if transfundido else "FALSO",
-                    "Informacion completa":      "VERDADERO" if info_completa else "FALSO",
-                    "Muestra adecuada":          "VERDADERO" if muestra_adec else "FALSO",
-                    "Destino muestra":           destino,
-                    "Tipo de muestra":           tipo_muestra1,
-                    "Fecha toma de la muestra":  fecha_muestra1.strip(),
-                    "muestra rechazada":         "VERDADERO" if m_rechazada else "FALSO",
-                    "Fecha toma rechazada":      fecha_rechaz.strip() if m_rechazada else "",
-                    "Tipo de Vinculacion":       tipo_vinc,
-                    "Contador":                  "0",
+                    "id":                       next_id(),
+                    "ficha_id":                 ficha.strip(),
+                    "fecha_ingreso":            fecha_ingreso.strip(),
+                    "institucion":              institucion.strip(),
+                    "ars":                      ars.strip(),
+                    "historia_clinica":         historia.strip(),
+                    "tipo_documento":           tipo_doc,
+                    "numero_documento":         num_doc.strip(),
+                    "ciudad":                   ciudad.strip(),
+                    "departamento":             departamento,
+                    "telefono_1":               tel1.strip() or "0",
+                    "telefono_2":               tel2.strip() or "0",
+                    "direccion":                direccion.strip(),
+                    "apellido_1":               apellido1.strip(),
+                    "apellido_2":               apellido2.strip(),
+                    "nombre_hijo":              nombre.strip(),
+                    "fecha_nacimiento":         fecha_nac.strip(),
+                    "peso":                     v_peso,
+                    "sexo":                     sexo,
+                    "prematuro":                "VERDADERO" if prematuro else "FALSO",
+                    "transfundido":             "VERDADERO" if transfundido else "FALSO",
+                    "informacion_completa":     "VERDADERO" if info_completa else "FALSO",
+                    "muestra_adecuada":         "VERDADERO" if muestra_adec else "FALSO",
+                    "destino_muestra":          destino,
+                    "tipo_muestra":             tipo_muestra1,
+                    "fecha_toma_muestra":       fecha_muestra1.strip(),
+                    "muestra_rechazada":        "VERDADERO" if m_rechazada else "FALSO",
+                    "fecha_toma_rechazada":     fecha_rechaz.strip() if m_rechazada else "",
+                    "tipo_vinculacion":         tipo_vinc,
+                    "contador":                 "0",
                 })
                 guardar_registro(row)
-                st.success(f"✅ Tarjeta **#{row['Id']}** — Ficha **{ficha}** guardada. "
+                st.success(f"✅ Tarjeta **#{row['id']}** — Ficha **{ficha}** guardada. "
                            f"Cuando lleguen los resultados búscala por No. de Ficha.")
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -490,7 +488,7 @@ with tab_form:
                 st.markdown('<div class="form-section">👤  Paciente encontrado</div>', unsafe_allow_html=True)
                 ci1, ci2, ci3, ci4 = st.columns(4)
                 ci1.metric("Ficha", reg.get("ficha_id", "—"))
-                ci2.metric("Paciente", f"{reg.get('apellido_1','')} {reg.get('Segundo Apellido','')}")
+                ci2.metric("Paciente", f"{reg.get('apellido_1','')} {reg.get('apellido_2','')}")
                 ci3.metric("Fecha nacimiento", reg.get("fecha_nacimiento", "—"))
                 ci4.metric("Institución", reg.get("institucion", "—"))
 
@@ -502,7 +500,7 @@ with tab_form:
 
                 # Estado actual del registro
                 tsh1_actual = reg.get("tsh_neonatal", "").strip()
-                tsh2_actual = reg.get("fecha_resultado_muestra_2", "").strip()
+                tsh2_actual = reg.get("resultado_muestra_2", "").strip()
                 ya_tiene_tsh1 = tsh1_actual not in ("", "0")
                 ya_tiene_tsh2 = tsh2_actual not in ("", "0")
 
@@ -520,7 +518,7 @@ with tab_form:
                 with r1:
                     fecha_result1 = st.text_input(
                         "★ Fecha de resultado",
-                        value=reg.get("Fecha de resultado", ""),
+                        value=reg.get("fecha_resultado", ""),
                         placeholder="6-May-19", key="r_fres1",
                     )
                 with r2:
@@ -565,16 +563,16 @@ with tab_form:
                     m2a, m2b, m2c = st.columns(3)
                     with m2a:
                         ficha2  = st.text_input("No. Ficha 2",
-                                                value=reg.get("No de ficha dos", ""), key="r_f2")
+                                                value=reg.get("ficha_id_2", ""), key="r_f2")
                         tipo_m2 = st.selectbox("★ Tipo muestra 2",
                                                ["Seleccionar...", "CORDON", "TALON", "VENA"],
                                                key="r_tm2")
                     with m2b:
                         fecha_m2 = st.text_input("★ Fecha toma muestra 2",
-                                                 value=reg.get("Fecha toma de la muestra 2", ""),
+                                                 value=reg.get("fecha_toma_muestra_2", ""),
                                                  placeholder="5-May-19", key="r_fm2")
                         f_res2   = st.text_input("★ Fecha resultado 2",
-                                                 value=reg.get("Fecha resultado muestra 2", ""),
+                                                 value=reg.get("fecha_resultado_muestra_2", ""),
                                                  placeholder="6-May-19", key="r_fr2")
                     with m2c:
                         tsh2_str = st.text_input("★ Resultado TSH 2 (µIU/mL)",
@@ -605,9 +603,9 @@ with tab_form:
 
                 if confirmado:
                     st.markdown('<div class="form-section">📱  Notificación SMS</div>', unsafe_allow_html=True)
-                    tel_reg = reg.get("Telefono uno", "") or reg.get("Telefono dos", "")
-                    ars_reg = reg.get("ARS", "su EPS")
-                    nombre_reg = reg.get("Nombre Hijo de", "")
+                    tel_reg    = reg.get("telefono_1", "") or reg.get("telefono_2", "")
+                    ars_reg    = reg.get("ars", "su EPS")
+                    nombre_reg = reg.get("nombre_hijo", "")
 
                     sms_col1, sms_col2 = st.columns(2)
                     with sms_col1:
@@ -625,9 +623,9 @@ with tab_form:
                         if notif_irs:
                             tel_irs = st.text_input("Teléfono IRS", key="r_tel_irs")
                             msg_irs = st.text_area("Mensaje IRS",
-                                value=f"Caso confirmado — Ficha {reg.get('No de ficha','')}: "
-                                      f"Paciente {reg.get('Primer Apellido','')} {reg.get('Segundo Apellido','')}, "
-                                      f"Ciudad: {reg.get('Ciudad','')}, TSH: {tsh2_str} µIU/mL. "
+                                value=f"Caso confirmado — Ficha {reg.get('ficha_id','')}: "
+                                      f"Paciente {reg.get('apellido_1','')} {reg.get('apellido_2','')}, "
+                                      f"Ciudad: {reg.get('ciudad','')}, TSH: {tsh2_str} µIU/mL. "
                                       f"ARS: {ars_reg}. Requiere seguimiento urgente.",
                                 height=90, key="r_msg_irs")
 
@@ -665,29 +663,28 @@ with tab_form:
                     else:
                         # Campos a actualizar
                         campos_actualizar = {
-                            "Fecha de resultado":           fecha_result1.strip(),
-                            "Resultados TSH neonatal":      v_tsh1,
+                            "fecha_resultado":      fecha_result1.strip(),
+                            "tsh_neonatal":         v_tsh1,
                         }
                         if necesita_m2 and v_tsh2 is not None:
                             campos_actualizar.update({
-                                "No de ficha dos":              ficha2.strip() or "0",
-                                "Tipo de muestra 2":            tipo_m2,
-                                "Fecha toma de la muestra 2":   fecha_m2.strip(),
-                                "Fecha resultado muestra 2":    f_res2.strip(),
-                                "Resultado toma de muestra 2":  v_tsh2,
-                                "Contador":                     "1",
+                                "ficha_id_2":               ficha2.strip() or "0",
+                                "tipo_muestra_2":           tipo_m2,
+                                "fecha_toma_muestra_2":     fecha_m2.strip(),
+                                "fecha_resultado_muestra_2":f_res2.strip(),
+                                "resultado_muestra_2":      v_tsh2,
+                                "contador":                 "1",
                             })
 
-                        actualizar_registro(int(reg["Id"]), campos_actualizar)
-                        st.session_state["reg_encontrado"] = None  # limpiar búsqueda
+                        actualizar_registro(int(reg["id"]), campos_actualizar)
+                        st.session_state["reg_encontrado"] = None
 
                         if confirmado:
-                            st.error(f"🚨 **CASO POSITIVO CONFIRMADO** — Ficha {reg.get('No de ficha')}")
+                            st.error(f"🚨 **CASO POSITIVO CONFIRMADO** — Ficha {reg.get('ficha_id')}")
                         else:
-                            st.success(f"✅ Resultados guardados para Ficha **{reg.get('No de ficha')}**."
+                            st.success(f"✅ Resultados guardados para Ficha **{reg.get('ficha_id')}**."
                                        + (" Caso cerrado como normal." if not necesita_m2 else ""))
 
-                        # Envío SMS
                         sms_log = st.session_state.setdefault("sms_log", [])
                         if confirmado:
                             if st.session_state.get("r_notif_pac") and st.session_state.get("r_tel_pac"):
@@ -697,7 +694,7 @@ with tab_form:
                                     st.session_state.get("r_sms_test", True),
                                 )
                                 sms_log.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                                "id_caso": reg["Id"], "destino": "Paciente",
+                                                "id_caso": reg["id"], "destino": "Paciente",
                                                 "telefono": st.session_state["r_tel_pac"], "status": status})
                                 (st.success if ok else st.error)(f"📱 Paciente: {status}")
 
@@ -708,7 +705,7 @@ with tab_form:
                                     st.session_state.get("r_sms_test", True),
                                 )
                                 sms_log.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                                "id_caso": reg["Id"], "destino": "IRS",
+                                                "id_caso": reg["id"], "destino": "IRS",
                                                 "telefono": st.session_state["r_tel_irs"], "status": status})
                                 (st.success if ok else st.error)(f"🏥 IRS: {status}")
 
