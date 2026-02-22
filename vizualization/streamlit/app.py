@@ -530,16 +530,25 @@ with tabs[1]:
     
     with col2:
         st.subheader("TSH por Prematuridad")
+        
+        # 1. Crear el gráfico base
         fig_box_premature = px.box(
             filtered_df,
             x='prematuro',
             y='tsh_neonatal',
             color='prematuro',
             points="outliers",
-            labels={'prematuro': 'Prematuro', 'tsh_neonatal': 'TSH Neonatal (mIU/L)'},
-            category_orders={"prematuro": [True, False]}
+            labels={'prematuro': 'Condición', 'tsh_neonatal': 'TSH Neonatal (mIU/L)'},
+            category_orders={"prematuro": [True, False]} # Mantenemos el orden lógico
         )
-        
+
+        # 2. NORMALIZACIÓN VISUAL (Evita el efecto aplanado)
+        # Calculamos un límite superior dinámico: el percentil 95 o al menos 30 para ver el umbral
+        if not filtered_df.empty:
+            ymax = max(30, filtered_df['tsh_neonatal'].quantile(0.95))
+            fig_box_premature.update_yaxes(range=[0, ymax])
+
+        # 3. Ajuste de etiquetas y estética
         fig_box_premature.update_xaxes(
             ticktext=["Prematuro", "No Prematuro"], 
             tickvals=[True, False]
@@ -551,6 +560,11 @@ with tabs[1]:
             line_color="red",
             annotation_text="Umbral: 15 mIU/L",
             annotation_position="top right"
+        )
+
+        fig_box_premature.update_layout(
+            height=500, # Altura fija para consistencia visual
+            showlegend=False # Opcional: ocultar leyenda si las etiquetas del eje X son claras
         )
         
         st.plotly_chart(fig_box_premature, use_container_width=True)
