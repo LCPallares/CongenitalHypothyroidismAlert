@@ -170,7 +170,7 @@ def guardar_registro(row: dict):
 
 @st.cache_data
 def load_data():
-    path = "../../data/dataset_corregido_v2b_anom2.csv"
+    path = "../../data/hipotiroidismo_registros.csv"
     try:
         df = pd.read_csv(path, low_memory=False)
         date_cols = [
@@ -249,359 +249,476 @@ tab_form, tab_dash, tab_alertas = st.tabs([
     "🚨  Casos Confirmados",
 ])
 
+# ─── Helpers CSV de registros propios ────────────────────────────────────────
+
+def leer_registros() -> pd.DataFrame:
+    """Lee el CSV de registros propios. Retorna DataFrame vacío si no existe."""
+    if not os.path.isfile(CSV_REGISTROS):
+        return pd.DataFrame(columns=FIELDNAMES)
+    df = pd.read_csv(CSV_REGISTROS, dtype=str).fillna("")
+    return df
+
+def actualizar_registro(id_registro: int, campos: dict):
+    """Sobreescribe los campos indicados en la fila con el Id dado."""
+    df = leer_registros()
+    mask = df["Id"].astype(str) == str(id_registro)
+    for col, val in campos.items():
+        if col in df.columns:
+            df.loc[mask, col] = str(val)
+    df.to_csv(CSV_REGISTROS, index=False)
+
+def buscar_por_ficha(ficha: str) -> pd.Series | None:
+    """Retorna la fila (Series) cuyo 'No de ficha' == ficha, o None."""
+    df = leer_registros()
+    if df.empty:
+        return None
+    match = df[df["No de ficha"].str.strip() == ficha.strip()]
+    if match.empty:
+        return None
+    return match.iloc[0]
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 1 — FORMULARIO DE INGRESO
 # ═════════════════════════════════════════════════════════════════════════════
 
 with tab_form:
-    st.markdown("## 📝 Digitalización de Tarjeta de Tamizaje")
-    st.caption("Complete los datos de la tarjeta física enviada por la IRS. Los campos marcados con ★ son obligatorios.")
 
-    # ── Inicializar session_state para el formulario ──────────────────────────
-    if "form_errors" not in st.session_state:
-        st.session_state.form_errors = []
-    if "form_submitted" not in st.session_state:
-        st.session_state.form_submitted = False
-    if "tsh1_val" not in st.session_state:
-        st.session_state.tsh1_val = 0.0
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECCIÓN 1 — ACUDIENTE / DATOS GENERALES
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown('<div class="form-section">👤  Datos del Acudiente / Institución</div>', unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        ficha        = st.text_input("★ No. de Ficha", placeholder="369980")
-        fecha_ingreso= st.text_input("★ Fecha de Ingreso", placeholder="5-May-19",
-                                      help="Formatos: 5-May-19  |  05/05/2019  |  2019-05-05")
-        institucion  = st.text_input("★ Institución", placeholder="VICTORIA")
-    with c2:
-        ars          = st.text_input("★ ARS / EPS", placeholder="MEDIMAS")
-        historia     = st.text_input("Historia Clínica", placeholder="Número")
-        tipo_doc     = st.selectbox("★ Tipo de Documento",
-                                     ["Seleccionar...", "CC", "CE", "PA", "RC", "TI"])
-    with c3:
-        num_doc      = st.text_input("★ Número de Documento", placeholder="123456789")
-        ciudad       = st.text_input("★ Ciudad", placeholder="Bogotá")
-        departamento = st.selectbox("★ Departamento", DEPARTAMENTOS)
-
-    c4, c5 = st.columns(2)
-    with c4:
-        tel1     = st.text_input("Teléfono 1", placeholder="3130000000")
-        tipo_vinc= st.selectbox("★ Tipo de Vinculación",
-                                  ["Seleccionar...", "CONTRIBUTIVO", "SUBSIDIADO",
-                                   "VINCULADO", "PARTICULAR", "ESPECIAL"])
-    with c5:
-        tel2     = st.text_input("Teléfono 2 (opcional)")
-        direccion= st.text_input("Dirección")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECCIÓN 2 — RECIÉN NACIDO
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown('<div class="form-section">👶  Datos del Recién Nacido</div>', unsafe_allow_html=True)
-
-    c6, c7, c8 = st.columns(3)
-    with c6:
-        apellido1 = st.text_input("★ Primer Apellido")
-        apellido2 = st.text_input("Segundo Apellido")
-    with c7:
-        nombre    = st.text_input("★ Nombre / Hijo(a) de")
-        fecha_nac = st.text_input("★ Fecha de Nacimiento", placeholder="5-May-19")
-    with c8:
-        peso      = st.text_input("★ Peso al nacer (g)", placeholder="2890")
-        sexo      = st.selectbox("★ Sexo",
-                                  ["Seleccionar...", "MASCULINO", "FEMENINO", "INDETERMINADO"])
-
-    c9, c10 = st.columns(2)
-    with c9:
-        prematuro    = st.checkbox("Prematuro")
-        transfundido = st.checkbox("Transfundido")
-    with c10:
-        info_completa = st.checkbox("Información completa")
-        muestra_adec  = st.checkbox("Muestra adecuada")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECCIÓN 3 — MUESTRA 1
-    # ─────────────────────────────────────────────────────────────────────────
-    st.markdown('<div class="form-section">🔬  Muestra 1</div>', unsafe_allow_html=True)
-
-    c11, c12, c13 = st.columns(3)
-    with c11:
-        tipo_muestra1  = st.selectbox("★ Tipo de Muestra",
-                                       ["Seleccionar...", "CORDON", "TALON", "VENA"])
-        destino        = st.selectbox("★ Destino muestra",
-                                       ["Seleccionar...", "ACEPTADA", "RECHAZADA"])
-    with c12:
-        fecha_muestra1 = st.text_input("★ Fecha toma muestra 1", placeholder="5-May-19")
-        fecha_result1  = st.text_input("★ Fecha resultado 1",    placeholder="6-May-19")
-    with c13:
-        tsh1_str = st.text_input("★ Resultado TSH 1 (µIU/mL)", placeholder="7.2")
-
-    # Calcular TSH1 en tiempo real para mostrar alerta
-    tsh1_num = None
-    if tsh1_str.strip():
-        try:
-            tsh1_num = float(tsh1_str.replace(",", "."))
-        except ValueError:
-            pass
-
-    if tsh1_num is not None and tsh1_num >= TSH_CORTE:
-        st.markdown(
-            f'<div class="tsh-alert">⚠️  TSH1 = <strong>{tsh1_num} µIU/mL</strong> — '
-            f'Supera el umbral de {TSH_CORTE} µIU/mL. <strong>Se requiere 2ª muestra de confirmación.</strong></div>',
-            unsafe_allow_html=True,
-        )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECCIÓN 4 — MUESTRA 2 (solo si TSH1 ≥ umbral)
-    # ─────────────────────────────────────────────────────────────────────────
-    necesita_m2 = tsh1_num is not None and tsh1_num >= TSH_CORTE
-
-    ficha2 = tipo_m2 = fecha_m2 = f_res2 = tsh2_str = ""
-
-    if necesita_m2:
-        st.markdown('<div class="form-section">🔁  Muestra 2 — Confirmación</div>', unsafe_allow_html=True)
-        c14, c15, c16 = st.columns(3)
-        with c14:
-            ficha2   = st.text_input("No. Ficha 2")
-            tipo_m2  = st.selectbox("★ Tipo muestra 2",
-                                     ["Seleccionar...", "CORDON", "TALON", "VENA"],
-                                     key="tipo_m2")
-        with c15:
-            fecha_m2 = st.text_input("★ Fecha toma muestra 2", placeholder="5-May-19", key="fm2")
-            f_res2   = st.text_input("★ Fecha resultado 2",    placeholder="6-May-19", key="fr2")
-        with c16:
-            tsh2_str = st.text_input("★ Resultado TSH 2 (µIU/mL)", placeholder="18.5", key="tsh2")
-
-        if tsh2_str.strip():
-            try:
-                tsh2_num = float(tsh2_str.replace(",", "."))
-                if tsh2_num >= TSH_CORTE:
-                    st.error(f"🚨 TSH2 = {tsh2_num} µIU/mL — **HIPOTIROIDISMO CONFIRMADO**. "
-                             f"Se deberá notificar al paciente y a la IRS.")
-                else:
-                    st.success(f"✅ TSH2 = {tsh2_num} µIU/mL — Resultado normal en segunda muestra.")
-            except ValueError:
-                pass
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECCIÓN 5 — MUESTRA RECHAZADA
-    # ─────────────────────────────────────────────────────────────────────────
-    with st.expander("❌  Muestra rechazada (opcional)"):
-        m_rechazada = st.checkbox("¿Hubo muestra rechazada?")
-        c17, c18 = st.columns(2)
-        with c17:
-            fecha_rechaz     = st.text_input("Fecha toma rechazada", key="frech")
-            res_rechaz       = st.selectbox("Resultado rechazada",
-                                             ["", "PENDIENTE", "NORMAL", "ALTERADO"])
-        with c18:
-            fecha_res_rechaz = st.text_input("Fecha resultado rechazada", key="frr")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECCIÓN 6 — SMS AL GUARDAR
-    # ─────────────────────────────────────────────────────────────────────────
-    if necesita_m2:
-        st.markdown('<div class="form-section">📱  Notificación SMS al guardar</div>', unsafe_allow_html=True)
-        st.caption("Si el caso es positivo confirmado, se puede enviar SMS al paciente y/o a la IRS al momento de guardar.")
-
-        c_sms1, c_sms2 = st.columns(2)
-        with c_sms1:
-            enviar_al_paciente = st.checkbox("Notificar al paciente/acudiente por SMS")
-            if enviar_al_paciente:
-                tel_paciente = st.text_input("Teléfono paciente",
-                                              value=tel1 or tel2,
-                                              placeholder="+573130000000",
-                                              key="tel_pac")
-                msg_paciente = st.text_area(
-                    "Mensaje paciente",
-                    value=(f"Alerta: El resultado del tamizaje de hipotiroidismo de su hijo(a) "
-                           f"es POSITIVO (TSH: {tsh2_str} µIU/mL). "
-                           f"Por favor contacte a {ars} para iniciar tratamiento urgente."),
-                    height=100, key="msg_pac",
-                )
-        with c_sms2:
-            enviar_a_irs = st.checkbox("Notificar a la IRS por SMS")
-            if enviar_a_irs:
-                tel_irs  = st.text_input("Teléfono IRS", placeholder="+573130000000", key="tel_irs")
-                msg_irs  = st.text_area(
-                    "Mensaje IRS",
-                    value=(f"Caso positivo: Paciente {apellido1} {apellido2}, "
-                           f"Ciudad: {ciudad}, TSH: {tsh2_str} µIU/mL. "
-                           f"ARS: {ars}. Requiere seguimiento urgente."),
-                    height=100, key="msg_irs",
-                )
-        sms_test_mode = st.checkbox("🧪 Modo de prueba SMS (no envía realmente)", value=True)
-    else:
-        enviar_al_paciente = False
-        enviar_a_irs = False
-        sms_test_mode = True
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # BOTÓN GUARDAR
-    # ─────────────────────────────────────────────────────────────────────────
+    # ── Selector de modo ─────────────────────────────────────────────────────
+    modo = st.radio(
+        "¿Qué deseas hacer?",
+        ["📋  Registrar nueva tarjeta", "🔬  Cargar resultados de laboratorio"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
     st.markdown("---")
-    col_btn1, col_btn2 = st.columns([1, 3])
-    with col_btn1:
-        guardar = st.button("💾  Guardar Registro", use_container_width=True, type="primary")
 
-    if guardar:
-        errors = []
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODO A — NUEVO REGISTRO (solo datos del paciente y muestra, sin TSH)
+    # ══════════════════════════════════════════════════════════════════════════
+    if modo == "📋  Registrar nueva tarjeta":
 
-        # Validar campos obligatorios simples
-        for val, label in [
-            (ficha, "No. de Ficha"), (institucion, "Institución"),
-            (ars, "ARS"), (num_doc, "Número Documento"),
-            (ciudad, "Ciudad"), (apellido1, "Primer Apellido"),
-            (nombre, "Nombre"),
-        ]:
-            if not val.strip():
-                errors.append(f"**{label}** es obligatorio")
+        st.markdown("## 📋 Nueva Tarjeta de Tamizaje")
+        st.caption("Ingrese los datos de la tarjeta física enviada por la IRS. ★ = obligatorio.")
 
-        # Spinners
-        for val, label in [
-            (tipo_doc, "Tipo de Documento"), (departamento, "Departamento"),
-            (sexo, "Sexo"), (tipo_vinc, "Tipo Vinculación"),
-            (tipo_muestra1, "Tipo de Muestra"), (destino, "Destino muestra"),
-        ]:
-            if not val or val == "Seleccionar...":
-                errors.append(f"**{label}** es obligatorio")
+        # ── Sección institución ───────────────────────────────────────────────
+        st.markdown('<div class="form-section">🏥  Institución / Acudiente</div>', unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            ficha         = st.text_input("★ No. de Ficha", placeholder="369980", key="n_ficha")
+            fecha_ingreso = st.text_input("★ Fecha de Ingreso", placeholder="5-May-19",
+                                          help="5-May-19 | 05/05/2019 | 2019-05-05", key="n_fi")
+            institucion   = st.text_input("★ Institución", placeholder="VICTORIA", key="n_inst")
+        with c2:
+            ars           = st.text_input("★ ARS / EPS", placeholder="MEDIMAS", key="n_ars")
+            historia      = st.text_input("Historia Clínica", key="n_hist")
+            tipo_doc      = st.selectbox("★ Tipo de Documento",
+                                         ["Seleccionar...", "CC", "CE", "PA", "RC", "TI"], key="n_tdoc")
+        with c3:
+            num_doc       = st.text_input("★ Número de Documento", key="n_ndoc")
+            ciudad        = st.text_input("★ Ciudad", placeholder="Bogotá", key="n_ciudad")
+            departamento  = st.selectbox("★ Departamento", DEPARTAMENTOS, key="n_depto")
 
-        # Fechas
-        d_fi, e = val_fecha(fecha_ingreso, "Fecha de ingreso")
-        if e: errors.append(e)
-        d_fn, e = val_fecha(fecha_nac, "Fecha de Nacimiento")
-        if e: errors.append(e)
-        if d_fi and d_fn:
-            if d_fn > d_fi:
-                errors.append("Fecha de nacimiento no puede ser posterior a la fecha de ingreso")
-            if (date.today() - d_fn).days > 365:
-                errors.append("Fecha de nacimiento inusual (más de 1 año atrás)")
+        c4, c5 = st.columns(2)
+        with c4:
+            tel1      = st.text_input("Teléfono 1", placeholder="3130000000", key="n_tel1")
+            tipo_vinc = st.selectbox("★ Tipo de Vinculación",
+                                     ["Seleccionar...", "CONTRIBUTIVO", "SUBSIDIADO",
+                                      "VINCULADO", "PARTICULAR", "ESPECIAL"], key="n_vinc")
+        with c5:
+            tel2      = st.text_input("Teléfono 2 (opcional)", key="n_tel2")
+            direccion = st.text_input("Dirección", key="n_dir")
 
-        _, e = val_fecha(fecha_muestra1, "Fecha toma muestra 1")
-        if e: errors.append(e)
-        d_r1, e = val_fecha(fecha_result1, "Fecha resultado 1")
-        if e: errors.append(e)
+        # ── Sección neonato ───────────────────────────────────────────────────
+        st.markdown('<div class="form-section">👶  Datos del Recién Nacido</div>', unsafe_allow_html=True)
+        c6, c7, c8 = st.columns(3)
+        with c6:
+            apellido1 = st.text_input("★ Primer Apellido", key="n_ap1")
+            apellido2 = st.text_input("Segundo Apellido", key="n_ap2")
+        with c7:
+            nombre    = st.text_input("★ Nombre / Hijo(a) de", key="n_nom")
+            fecha_nac = st.text_input("★ Fecha de Nacimiento", placeholder="5-May-19", key="n_fnac")
+        with c8:
+            peso      = st.text_input("★ Peso al nacer (g)", placeholder="2890", key="n_peso")
+            sexo      = st.selectbox("★ Sexo",
+                                     ["Seleccionar...", "MASCULINO", "FEMENINO", "INDETERMINADO"], key="n_sexo")
 
-        # Peso
-        v_peso, e = val_peso(peso)
-        if e: errors.append(e)
+        c9, c10 = st.columns(2)
+        with c9:
+            prematuro    = st.checkbox("Prematuro", key="n_prem")
+            transfundido = st.checkbox("Transfundido", key="n_trans")
+        with c10:
+            info_completa = st.checkbox("Información completa", key="n_info")
+            muestra_adec  = st.checkbox("Muestra adecuada", key="n_madec")
 
-        # TSH1
-        v_tsh1, e = val_tsh(tsh1_str, "TSH 1")
-        if e: errors.append(e)
+        # ── Sección muestra (sin resultados) ──────────────────────────────────
+        st.markdown('<div class="form-section">🔬  Datos de la Muestra</div>', unsafe_allow_html=True)
+        st.caption("Solo se registra la toma. Los resultados de laboratorio se cargan después.")
 
-        # Muestra 2
-        v_tsh2 = None
-        if necesita_m2:
-            v_tsh2, e = val_tsh(tsh2_str if tsh2_str else "", "TSH 2")
+        c11, c12, c13 = st.columns(3)
+        with c11:
+            tipo_muestra1 = st.selectbox("★ Tipo de Muestra",
+                                         ["Seleccionar...", "CORDON", "TALON", "VENA"], key="n_tm1")
+            destino       = st.selectbox("★ Destino muestra",
+                                         ["Seleccionar...", "ACEPTADA", "RECHAZADA"], key="n_dest")
+        with c12:
+            fecha_muestra1 = st.text_input("★ Fecha toma muestra", placeholder="5-May-19", key="n_fm1")
+        with c13:
+            tipo_vinc_m = ""  # placeholder — vinculación ya capturada arriba
+
+        # Muestra rechazada (opcional)
+        with st.expander("❌  Muestra rechazada (si aplica)"):
+            m_rechazada      = st.checkbox("¿Hubo muestra rechazada?", key="n_mrech")
+            fecha_rechaz     = st.text_input("Fecha toma rechazada", key="n_frech")
+
+        # ── Botón guardar ─────────────────────────────────────────────────────
+        st.markdown("---")
+        if st.button("💾  Guardar Tarjeta", type="primary", key="btn_guardar_nueva"):
+            errors = []
+
+            # Obligatorios texto
+            for val, label in [
+                (ficha, "No. de Ficha"), (institucion, "Institución"), (ars, "ARS"),
+                (num_doc, "Número Documento"), (ciudad, "Ciudad"),
+                (apellido1, "Primer Apellido"), (nombre, "Nombre"),
+            ]:
+                if not val.strip():
+                    errors.append(f"**{label}** es obligatorio")
+
+            # Obligatorios selectbox
+            for val, label in [
+                (tipo_doc, "Tipo de Documento"), (departamento, "Departamento"),
+                (sexo, "Sexo"), (tipo_vinc, "Tipo de Vinculación"),
+                (tipo_muestra1, "Tipo de Muestra"), (destino, "Destino muestra"),
+            ]:
+                if not val or val == "Seleccionar...":
+                    errors.append(f"**{label}** es obligatorio")
+
+            # Fechas
+            d_fi, e = val_fecha(fecha_ingreso, "Fecha de ingreso")
             if e: errors.append(e)
-            if not tipo_m2 or tipo_m2 == "Seleccionar...":
-                errors.append("Tipo de muestra 2 es obligatorio")
-            _, e = val_fecha(fecha_m2, "Fecha toma muestra 2")
+            d_fn, e = val_fecha(fecha_nac, "Fecha de Nacimiento")
             if e: errors.append(e)
-            _, e = val_fecha(f_res2, "Fecha resultado 2")
+            if d_fi and d_fn:
+                if d_fn > d_fi:
+                    errors.append("Fecha de nacimiento no puede ser posterior a la fecha de ingreso")
+                if (date.today() - d_fn).days > 365:
+                    errors.append("Fecha de nacimiento inusual (más de 1 año atrás)")
+            _, e = val_fecha(fecha_muestra1, "Fecha toma muestra")
             if e: errors.append(e)
 
-        # ── Mostrar errores o guardar ─────────────────────────────────────
-        if errors:
-            st.error(f"**Se encontraron {len(errors)} error(es):**")
-            for err in errors:
-                st.markdown(f"- {err}")
-        else:
-            # Construir fila
-            row = {
-                "Id":                           next_id(),
-                "No de ficha":                  ficha.strip(),
-                "Fecha de ingreso":             fecha_ingreso.strip(),
-                "Institucion":                  institucion.strip(),
-                "ARS":                          ars.strip(),
-                "Historia clinica":             historia.strip(),
-                "Tipo de Documento":            tipo_doc,
-                "Numero de Documento":          num_doc.strip(),
-                "Ciudad":                       ciudad.strip(),
-                "Departamento":                 departamento,
-                "Telefono uno":                 tel1.strip() or "0",
-                "Telefono dos":                 tel2.strip() or "0",
-                "Direccion":                    direccion.strip(),
-                "Primer Apellido":              apellido1.strip(),
-                "Segundo Apellido":             apellido2.strip(),
-                "Nombre Hijo de":               nombre.strip(),
-                "Fecha de Nacimiento":          fecha_nac.strip(),
-                "Peso":                         v_peso,
-                "Sexo":                         sexo,
-                "Prematuro":                    "VERDADERO" if prematuro else "FALSO",
-                "Transfundido":                 "VERDADERO" if transfundido else "FALSO",
-                "Informacion completa":         "VERDADERO" if info_completa else "FALSO",
-                "Muestra adecuada":             "VERDADERO" if muestra_adec else "FALSO",
-                "Destino muestra":              destino,
-                "Tipo de muestra":              tipo_muestra1,
-                "Fecha toma de la muestra":     fecha_muestra1.strip(),
-                "Fecha de resultado":           fecha_result1.strip(),
-                "Resultados TSH neonatal":      v_tsh1,
-                "No de ficha dos":              ficha2.strip() or "0",
-                "Tipo de muestra 2":            tipo_m2 if necesita_m2 and tipo_m2 != "Seleccionar..." else "",
-                "Fecha toma de la muestra 2":   fecha_m2.strip() if necesita_m2 else "",
-                "Fecha resultado muestra 2":    f_res2.strip() if necesita_m2 else "",
-                "Resultado toma de muestra 2":  v_tsh2 if v_tsh2 else "",
-                "Contador":                     "1" if necesita_m2 else "0",
-                "muestra rechazada":            "VERDADERO" if m_rechazada else "FALSO",
-                "Fecha toma rechazada":         fecha_rechaz.strip() if m_rechazada else "",
-                "Tipo de Vinculacion":          tipo_vinc,
-                "Resultado Rechazada":          res_rechaz if m_rechazada else "",
-                "Fecha resultado rechazada":    fecha_res_rechaz.strip() if m_rechazada else "",
-            }
-            guardar_registro(row)
+            # Peso
+            v_peso, e = val_peso(peso)
+            if e: errors.append(e)
 
-            st.markdown(
-                f'<div class="success-box">✅ Registro <strong>#{row["Id"]}</strong> guardado '
-                f'correctamente en <code>{CSV_REGISTROS}</code></div>',
-                unsafe_allow_html=True,
-            )
+            # Verificar que no exista ya esa ficha
+            if ficha.strip() and buscar_por_ficha(ficha):
+                errors.append(f"Ya existe un registro con la ficha **{ficha}**. "
+                               f"Para cargar resultados usa el modo 'Cargar resultados de laboratorio'.")
 
-            # ── Envío SMS ─────────────────────────────────────────────────
-            sms_log = st.session_state.setdefault("sms_log", [])
+            if errors:
+                st.error(f"**{len(errors)} error(es) encontrados:**")
+                for e in errors:
+                    st.markdown(f"- {e}")
+            else:
+                row = {f: "" for f in FIELDNAMES}
+                row.update({
+                    "Id":                        next_id(),
+                    "No de ficha":               ficha.strip(),
+                    "Fecha de ingreso":          fecha_ingreso.strip(),
+                    "Institucion":               institucion.strip(),
+                    "ARS":                       ars.strip(),
+                    "Historia clinica":          historia.strip(),
+                    "Tipo de Documento":         tipo_doc,
+                    "Numero de Documento":       num_doc.strip(),
+                    "Ciudad":                    ciudad.strip(),
+                    "Departamento":              departamento,
+                    "Telefono uno":              tel1.strip() or "0",
+                    "Telefono dos":              tel2.strip() or "0",
+                    "Direccion":                 direccion.strip(),
+                    "Primer Apellido":           apellido1.strip(),
+                    "Segundo Apellido":          apellido2.strip(),
+                    "Nombre Hijo de":            nombre.strip(),
+                    "Fecha de Nacimiento":       fecha_nac.strip(),
+                    "Peso":                      v_peso,
+                    "Sexo":                      sexo,
+                    "Prematuro":                 "VERDADERO" if prematuro else "FALSO",
+                    "Transfundido":              "VERDADERO" if transfundido else "FALSO",
+                    "Informacion completa":      "VERDADERO" if info_completa else "FALSO",
+                    "Muestra adecuada":          "VERDADERO" if muestra_adec else "FALSO",
+                    "Destino muestra":           destino,
+                    "Tipo de muestra":           tipo_muestra1,
+                    "Fecha toma de la muestra":  fecha_muestra1.strip(),
+                    "muestra rechazada":         "VERDADERO" if m_rechazada else "FALSO",
+                    "Fecha toma rechazada":      fecha_rechaz.strip() if m_rechazada else "",
+                    "Tipo de Vinculacion":       tipo_vinc,
+                    "Contador":                  "0",
+                })
+                guardar_registro(row)
+                st.success(f"✅ Tarjeta **#{row['Id']}** — Ficha **{ficha}** guardada. "
+                           f"Cuando lleguen los resultados búscala por No. de Ficha.")
 
-            confirmado_ahora = (v_tsh2 is not None and v_tsh2 >= TSH_CORTE)
+    # ══════════════════════════════════════════════════════════════════════════
+    # MODO B — CARGAR RESULTADOS (buscar por ficha → completar TSH)
+    # ══════════════════════════════════════════════════════════════════════════
+    else:
+        st.markdown("## 🔬 Carga de Resultados de Laboratorio")
+        st.caption("Busca el registro por No. de Ficha y agrega los resultados de TSH.")
 
-            if confirmado_ahora:
-                if enviar_al_paciente and tel_paciente:
-                    ok, status = enviar_sms(tel_paciente, msg_paciente, sms_test_mode)
-                    sms_log.append({
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "id_caso":   row["Id"],
-                        "destino":   "Paciente",
-                        "telefono":  tel_paciente,
-                        "status":    status,
-                    })
-                    if ok:
-                        st.success(f"📱 SMS paciente: {status}")
+        # ── Buscador ──────────────────────────────────────────────────────────
+        col_busq, col_btn = st.columns([3, 1])
+        with col_busq:
+            ficha_buscar = st.text_input("No. de Ficha:", placeholder="369980", key="busq_ficha")
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)
+            buscar = st.button("🔍  Buscar", key="btn_buscar", use_container_width=True)
+
+        # ── Resultado de la búsqueda ──────────────────────────────────────────
+        reg = None
+        if buscar or st.session_state.get("reg_encontrado"):
+            if buscar:
+                reg = buscar_por_ficha(ficha_buscar)
+                st.session_state["reg_encontrado"] = reg.to_dict() if reg is not None else None
+            elif st.session_state.get("reg_encontrado"):
+                import pandas as _pd
+                reg = _pd.Series(st.session_state["reg_encontrado"])
+
+            if reg is None:
+                st.error(f"No se encontró ningún registro con la ficha **{ficha_buscar}**.")
+            else:
+                # ── Tarjeta resumen del paciente ──────────────────────────────
+                st.markdown('<div class="form-section">👤  Paciente encontrado</div>', unsafe_allow_html=True)
+                ci1, ci2, ci3, ci4 = st.columns(4)
+                ci1.metric("Ficha", reg.get("No de ficha", "—"))
+                ci2.metric("Paciente", f"{reg.get('Primer Apellido','')} {reg.get('Segundo Apellido','')}")
+                ci3.metric("Fecha nacimiento", reg.get("Fecha de Nacimiento", "—"))
+                ci4.metric("Institución", reg.get("Institucion", "—"))
+
+                ci5, ci6, ci7, ci8 = st.columns(4)
+                ci5.metric("Ciudad", reg.get("Ciudad", "—"))
+                ci6.metric("ARS", reg.get("ARS", "—"))
+                ci7.metric("Tipo muestra", reg.get("Tipo de muestra", "—"))
+                ci8.metric("Fecha toma", reg.get("Fecha toma de la muestra", "—"))
+
+                # Estado actual del registro
+                tsh1_actual = reg.get("Resultados TSH neonatal", "").strip()
+                tsh2_actual = reg.get("Resultado toma de muestra 2", "").strip()
+                ya_tiene_tsh1 = tsh1_actual not in ("", "0")
+                ya_tiene_tsh2 = tsh2_actual not in ("", "0")
+
+                if ya_tiene_tsh1:
+                    st.info(f"ℹ️  Este registro ya tiene TSH1 = **{tsh1_actual} µIU/mL**"
+                            + (f" y TSH2 = **{tsh2_actual} µIU/mL**" if ya_tiene_tsh2 else "")
+                            + ". Puedes corregir los valores abajo.")
+
+                st.markdown("---")
+
+                # ── Formulario de resultados ──────────────────────────────────
+                st.markdown('<div class="form-section">🔬  Resultado — Muestra 1</div>', unsafe_allow_html=True)
+
+                r1, r2, r3 = st.columns(3)
+                with r1:
+                    fecha_result1 = st.text_input(
+                        "★ Fecha de resultado",
+                        value=reg.get("Fecha de resultado", ""),
+                        placeholder="6-May-19", key="r_fres1",
+                    )
+                with r2:
+                    tsh1_str = st.text_input(
+                        "★ Resultado TSH 1 (µIU/mL)",
+                        value=tsh1_actual if ya_tiene_tsh1 else "",
+                        placeholder="7.2", key="r_tsh1",
+                    )
+                with r3:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    # Preview en tiempo real
+                    if tsh1_str.strip():
+                        try:
+                            v_preview = float(tsh1_str.replace(",", "."))
+                            if v_preview >= TSH_CORTE:
+                                st.warning(f"⚠️ TSH1 = {v_preview} — requiere 2ª muestra")
+                            else:
+                                st.success(f"✅ TSH1 = {v_preview} — dentro del rango normal")
+                        except ValueError:
+                            pass
+
+                # Calcular si necesita muestra 2
+                tsh1_num = None
+                if tsh1_str.strip():
+                    try:
+                        tsh1_num = float(tsh1_str.replace(",", "."))
+                    except ValueError:
+                        pass
+
+                necesita_m2 = tsh1_num is not None and tsh1_num >= TSH_CORTE
+
+                # ── Muestra 2 (solo si TSH1 ≥ 15) ────────────────────────────
+                ficha2 = tipo_m2 = fecha_m2 = f_res2 = tsh2_str = ""
+                if necesita_m2:
+                    st.markdown(
+                        f'<div class="tsh-alert">⚠️ TSH1 = <strong>{tsh1_num} µIU/mL</strong> ≥ {TSH_CORTE} — '
+                        f'Se requiere 2ª muestra de confirmación.</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown('<div class="form-section">🔁  Resultado — Muestra 2</div>', unsafe_allow_html=True)
+
+                    m2a, m2b, m2c = st.columns(3)
+                    with m2a:
+                        ficha2  = st.text_input("No. Ficha 2",
+                                                value=reg.get("No de ficha dos", ""), key="r_f2")
+                        tipo_m2 = st.selectbox("★ Tipo muestra 2",
+                                               ["Seleccionar...", "CORDON", "TALON", "VENA"],
+                                               key="r_tm2")
+                    with m2b:
+                        fecha_m2 = st.text_input("★ Fecha toma muestra 2",
+                                                 value=reg.get("Fecha toma de la muestra 2", ""),
+                                                 placeholder="5-May-19", key="r_fm2")
+                        f_res2   = st.text_input("★ Fecha resultado 2",
+                                                 value=reg.get("Fecha resultado muestra 2", ""),
+                                                 placeholder="6-May-19", key="r_fr2")
+                    with m2c:
+                        tsh2_str = st.text_input("★ Resultado TSH 2 (µIU/mL)",
+                                                 value=tsh2_actual if ya_tiene_tsh2 else "",
+                                                 placeholder="18.5", key="r_tsh2")
+
+                    # Preview TSH2
+                    if tsh2_str.strip():
+                        try:
+                            tsh2_preview = float(tsh2_str.replace(",", "."))
+                            if tsh2_preview >= TSH_CORTE:
+                                st.error(f"🚨 TSH2 = {tsh2_preview} µIU/mL — "
+                                         f"**HIPOTIROIDISMO CONFIRMADO**. Se debe notificar al paciente y a la IRS.")
+                            else:
+                                st.success(f"✅ TSH2 = {tsh2_preview} µIU/mL — Segunda muestra normal.")
+                        except ValueError:
+                            pass
+
+                # ── SMS si es positivo confirmado ─────────────────────────────
+                v_tsh2_final = None
+                if tsh2_str.strip():
+                    try:
+                        v_tsh2_final = float(tsh2_str.replace(",", "."))
+                    except ValueError:
+                        pass
+
+                confirmado = necesita_m2 and v_tsh2_final is not None and v_tsh2_final >= TSH_CORTE
+
+                if confirmado:
+                    st.markdown('<div class="form-section">📱  Notificación SMS</div>', unsafe_allow_html=True)
+                    tel_reg = reg.get("Telefono uno", "") or reg.get("Telefono dos", "")
+                    ars_reg = reg.get("ARS", "su EPS")
+                    nombre_reg = reg.get("Nombre Hijo de", "")
+
+                    sms_col1, sms_col2 = st.columns(2)
+                    with sms_col1:
+                        notif_paciente = st.checkbox("Notificar al paciente/acudiente", key="r_notif_pac")
+                        if notif_paciente:
+                            tel_pac = st.text_input("Teléfono paciente",
+                                                    value=tel_reg, key="r_tel_pac")
+                            msg_pac = st.text_area("Mensaje paciente",
+                                value=f"Alerta: El resultado del tamizaje de hipotiroidismo de {nombre_reg} "
+                                      f"es POSITIVO (TSH: {tsh2_str} µIU/mL). "
+                                      f"Contacte a {ars_reg} para iniciar tratamiento urgente.",
+                                height=90, key="r_msg_pac")
+                    with sms_col2:
+                        notif_irs = st.checkbox("Notificar a la IRS", key="r_notif_irs")
+                        if notif_irs:
+                            tel_irs = st.text_input("Teléfono IRS", key="r_tel_irs")
+                            msg_irs = st.text_area("Mensaje IRS",
+                                value=f"Caso confirmado — Ficha {reg.get('No de ficha','')}: "
+                                      f"Paciente {reg.get('Primer Apellido','')} {reg.get('Segundo Apellido','')}, "
+                                      f"Ciudad: {reg.get('Ciudad','')}, TSH: {tsh2_str} µIU/mL. "
+                                      f"ARS: {ars_reg}. Requiere seguimiento urgente.",
+                                height=90, key="r_msg_irs")
+
+                    sms_test = st.checkbox("🧪 Modo de prueba (no envía realmente)", value=True, key="r_sms_test")
+
+                # ── Botón guardar resultados ──────────────────────────────────
+                st.markdown("---")
+                if st.button("💾  Guardar Resultados", type="primary", key="btn_guardar_res"):
+                    errors = []
+
+                    # Fecha resultado 1
+                    d_r1, e = val_fecha(fecha_result1, "Fecha resultado 1")
+                    if e: errors.append(e)
+
+                    # TSH 1
+                    v_tsh1, e = val_tsh(tsh1_str, "TSH 1")
+                    if e: errors.append(e)
+
+                    # Muestra 2
+                    v_tsh2 = None
+                    if necesita_m2:
+                        v_tsh2, e = val_tsh(tsh2_str, "TSH 2")
+                        if e: errors.append(e)
+                        if not tipo_m2 or tipo_m2 == "Seleccionar...":
+                            errors.append("Tipo de muestra 2 es obligatorio")
+                        _, e = val_fecha(fecha_m2, "Fecha toma muestra 2")
+                        if e: errors.append(e)
+                        _, e = val_fecha(f_res2, "Fecha resultado 2")
+                        if e: errors.append(e)
+
+                    if errors:
+                        st.error(f"**{len(errors)} error(es):**")
+                        for e in errors:
+                            st.markdown(f"- {e}")
                     else:
-                        st.error(f"📱 SMS paciente fallido: {status}")
+                        # Campos a actualizar
+                        campos_actualizar = {
+                            "Fecha de resultado":           fecha_result1.strip(),
+                            "Resultados TSH neonatal":      v_tsh1,
+                        }
+                        if necesita_m2 and v_tsh2 is not None:
+                            campos_actualizar.update({
+                                "No de ficha dos":              ficha2.strip() or "0",
+                                "Tipo de muestra 2":            tipo_m2,
+                                "Fecha toma de la muestra 2":   fecha_m2.strip(),
+                                "Fecha resultado muestra 2":    f_res2.strip(),
+                                "Resultado toma de muestra 2":  v_tsh2,
+                                "Contador":                     "1",
+                            })
 
-                if enviar_a_irs and tel_irs:
-                    ok, status = enviar_sms(tel_irs, msg_irs, sms_test_mode)
-                    sms_log.append({
-                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "id_caso":   row["Id"],
-                        "destino":   "IRS",
-                        "telefono":  tel_irs,
-                        "status":    status,
-                    })
-                    if ok:
-                        st.success(f"🏥 SMS IRS: {status}")
-                    else:
-                        st.error(f"🏥 SMS IRS fallido: {status}")
-            elif necesita_m2 and not confirmado_ahora:
-                st.info("TSH2 normal — no se requiere notificación de caso positivo.")
+                        actualizar_registro(int(reg["Id"]), campos_actualizar)
+                        st.session_state["reg_encontrado"] = None  # limpiar búsqueda
 
-    # ── Historial de envíos de esta sesión ────────────────────────────────────
+                        if confirmado:
+                            st.error(f"🚨 **CASO POSITIVO CONFIRMADO** — Ficha {reg.get('No de ficha')}")
+                        else:
+                            st.success(f"✅ Resultados guardados para Ficha **{reg.get('No de ficha')}**."
+                                       + (" Caso cerrado como normal." if not necesita_m2 else ""))
+
+                        # Envío SMS
+                        sms_log = st.session_state.setdefault("sms_log", [])
+                        if confirmado:
+                            if st.session_state.get("r_notif_pac") and st.session_state.get("r_tel_pac"):
+                                ok, status = enviar_sms(
+                                    st.session_state["r_tel_pac"],
+                                    st.session_state.get("r_msg_pac", ""),
+                                    st.session_state.get("r_sms_test", True),
+                                )
+                                sms_log.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                                "id_caso": reg["Id"], "destino": "Paciente",
+                                                "telefono": st.session_state["r_tel_pac"], "status": status})
+                                (st.success if ok else st.error)(f"📱 Paciente: {status}")
+
+                            if st.session_state.get("r_notif_irs") and st.session_state.get("r_tel_irs"):
+                                ok, status = enviar_sms(
+                                    st.session_state["r_tel_irs"],
+                                    st.session_state.get("r_msg_irs", ""),
+                                    st.session_state.get("r_sms_test", True),
+                                )
+                                sms_log.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                                "id_caso": reg["Id"], "destino": "IRS",
+                                                "telefono": st.session_state["r_tel_irs"], "status": status})
+                                (st.success if ok else st.error)(f"🏥 IRS: {status}")
+
+    # ── Historial SMS de la sesión ────────────────────────────────────────────
     if st.session_state.get("sms_log"):
         with st.expander("📋  Historial de SMS enviados en esta sesión"):
             st.dataframe(pd.DataFrame(st.session_state["sms_log"]), use_container_width=True)
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TAB 2 — DASHBOARD (código original intacto)
+# TAB 2 — DASHBOARD
 # ═════════════════════════════════════════════════════════════════════════════
 
 with tab_dash:
