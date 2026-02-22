@@ -1,1171 +1,1118 @@
-import streamlit as st
+"""
+Sistema de Tamizaje — Hipotiroidismo Congénito
+==============================================
+Tabs:
+  1. 📝 Ingreso de Datos   — Formulario con validación + envío SMS
+  2. 📊 Dashboard          — Reportes y análisis (código original)
+  3. 🚨 Casos Confirmados  — Alertas SMS masivas
+
+Instalación:
+    pip install streamlit pandas plotly folium streamlit-folium twilio
+"""
+
+import csv
+import os
+from datetime import datetime, date
+
+import folium
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import numpy as np
-from datetime import datetime
-
-import folium
+import streamlit as st
 from streamlit_folium import st_folium
 
-# Configuración de la página
+# ─── Configuración ────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Dashboard de Hipotiroidismo Congénito",
+    page_title="Hipotiroidismo Congénito",
     page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# Título principal
-st.title("📊 Dashboard de Hipotiroidismo Congénito")
-st.markdown("---")
+# ─── CSS personalizado ────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* Tabs más grandes */
+.stTabs [data-baseweb="tab-list"] { gap: 8px; }
+.stTabs [data-baseweb="tab"] {
+    padding: 10px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    border-radius: 8px 8px 0 0;
+}
+/* Tarjetas de métricas */
+[data-testid="metric-container"] {
+    background: #0e1525;
+    border: 1px solid #1e3050;
+    border-radius: 10px;
+    padding: 12px 16px;
+}
+/* Secciones del formulario */
+.form-section {
+    background: #0e1525;
+    border-left: 3px solid #2fb8d4;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 16px;
+    margin: 14px 0 8px 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #2fb8d4;
+}
+/* Alerta TSH */
+.tsh-alert {
+    background: #2d1f00;
+    border: 1px solid #f39c12;
+    border-radius: 8px;
+    padding: 10px 16px;
+    color: #f39c12;
+    font-weight: 600;
+    margin: 8px 0;
+}
+/* Alerta éxito */
+.success-box {
+    background: #0d2a1a;
+    border: 1px solid #27ae60;
+    border-radius: 8px;
+    padding: 10px 16px;
+    color: #2ecc71;
+    font-weight: 600;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# Cargar los datos
-@st.cache_data
+# ─── Constantes ───────────────────────────────────────────────────────────────
+CSV_REGISTROS = "../../data/hipotiroidismo_registros.csv"
+TSH_MIN, TSH_MAX = 0.1, 300.0
+PESO_MIN, PESO_MAX = 400, 8000
+TSH_CORTE = 15.0          # umbral clínico del cliente
 
-def load_data():
+FIELDNAMES = [
+    "Id", "No de ficha", "Fecha de ingreso", "Institucion", "ARS",
+    "Historia clinica", "Tipo de Documento", "Numero de Documento",
+    "Ciudad", "Departamento", "Telefono uno", "Telefono dos", "Direccion",
+    "Primer Apellido", "Segundo Apellido", "Nombre Hijo de",
+    "Fecha de Nacimiento", "Peso", "Sexo", "Prematuro", "Transfundido",
+    "Informacion completa", "Muestra adecuada", "Destino muestra",
+    "Tipo de muestra", "Fecha toma de la muestra", "Fecha de resultado",
+    "Resultados TSH neonatal", "No de ficha dos", "Tipo de muestra 2",
+    "Fecha toma de la muestra 2", "Fecha resultado muestra 2",
+    "Resultado toma de muestra 2", "Contador", "muestra rechazada",
+    "Fecha toma rechazada", "Tipo de Vinculacion", "Resultado Rechazada",
+    "Fecha resultado rechazada",
+]
+
+DEPARTAMENTOS = [
+    "Seleccionar...", "Amazonas", "Antioquia", "Arauca", "Atlántico",
+    "Bolívar", "Boyacá", "Caldas", "Caquetá", "Casanare", "Cauca",
+    "Cesar", "Chocó", "Córdoba", "Cundinamarca", "Guainía", "Guaviare",
+    "Huila", "La Guajira", "Magdalena", "Meta", "Nariño",
+    "Norte de Santander", "Putumayo", "Quindío", "Risaralda",
+    "San Andrés", "Santander", "Sucre", "Tolima", "Valle del Cauca",
+    "Vaupés", "Vichada",
+]
+
+# ─── Helpers de validación ────────────────────────────────────────────────────
+
+def val_fecha(text, campo="Fecha"):
+    if not text.strip():
+        return None, f"{campo} es obligatoria"
+    for fmt in ("%d-%b-%y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(text.strip(), fmt).date(), None
+        except ValueError:
+            pass
+    return None, f"{campo}: formato inválido (ej: 5-May-19 o 05/05/2019)"
+
+def val_tsh(text, campo="TSH"):
+    if not str(text).strip():
+        return None, f"{campo} es obligatorio"
     try:
-        # Cargar el CSV con low_memory=False para evitar problemas con tipos de datos mixtos
-        df = pd.read_csv('../../data/dataset_corregido_v2b_anom2.csv', low_memory=False)
-       
-        # Convertir columnas de fecha a datetime 
-        date_columns = ['fecha_ingreso', 'fecha_nacimiento', 'fecha_toma_muestra',
-                        'fecha_resultado', 'fecha_toma_muestra_2', 'fecha_resultado_muestra_2',
-                        'fecha_toma_rechazada', 'fecha_resultado_rechazada']
-       
-        for col in date_columns:
+        v = float(str(text).replace(",", "."))
+    except ValueError:
+        return None, f"{campo} debe ser un número"
+    if v < TSH_MIN: return None, f"{campo} demasiado bajo (mín {TSH_MIN})"
+    if v > TSH_MAX: return None, f"{campo} imposible (máx {TSH_MAX} µIU/mL)"
+    return v, None
+
+def val_peso(text):
+    if not str(text).strip():
+        return None, "Peso es obligatorio"
+    try:
+        v = float(str(text).replace(",", "."))
+    except ValueError:
+        return None, "Peso debe ser un número"
+    if v < PESO_MIN: return None, f"Peso muy bajo (mín {PESO_MIN} g)"
+    if v > PESO_MAX: return None, f"Peso imposible (máx {PESO_MAX} g)"
+    return v, None
+
+def next_id():
+    if not os.path.isfile(CSV_REGISTROS):
+        return 1
+    with open(CSV_REGISTROS, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        return 1
+    try:
+        return max(int(r.get("Id", 0)) for r in rows) + 1
+    except Exception:
+        return len(rows) + 1
+
+def guardar_registro(row: dict):
+    existe = os.path.isfile(CSV_REGISTROS)
+    with open(CSV_REGISTROS, "a", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        if not existe:
+            w.writeheader()
+        w.writerow(row)
+
+# ─── Carga del dataset principal (dashboard) ─────────────────────────────────
+
+@st.cache_data
+def load_data():
+    path = "../../data/dataset_corregido_v2b_anom2.csv"
+    try:
+        df = pd.read_csv(path, low_memory=False)
+        date_cols = [
+            "fecha_ingreso", "fecha_nacimiento", "fecha_toma_muestra",
+            "fecha_resultado", "fecha_toma_muestra_2", "fecha_resultado_muestra_2",
+            "fecha_toma_rechazada", "fecha_resultado_rechazada",
+        ]
+        for col in date_cols:
             if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-       
-        # Convertir columnas booleanas
-        bool_columns = ['prematuro', 'transfundido', 'informacion_completa',
-                        'muestra_adecuada', 'muestra_rechazada']
-       
-        for col in bool_columns:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+        for col in ["prematuro", "transfundido", "informacion_completa",
+                    "muestra_adecuada", "muestra_rechazada"]:
             if col in df.columns:
-                # Mapear específicamente VERDADERO y FALSO
-                df[col] = df[col].map({'VERDADERO': True, 'FALSO': False})
-                # Convertir NaN a False
-                #df[col] = df[col].fillna(False)
-       
-        # Manejar valores nulos en columnas numéricas clave
-        df['tsh_neonatal'] = pd.to_numeric(df['tsh_neonatal'], errors='coerce').fillna(0)
-        df['resultado_muestra_2'] = pd.to_numeric(df['resultado_muestra_2'], errors='coerce').fillna(0)
-       
-        # Crear columna 'sospecha_hipotiroidismo'
-        df['sospecha_hipotiroidismo'] = df['tsh_neonatal'] >= 15
-       
-        # Crear columna 'confirmado_hipotiroidismo'
-        # Solo es True si tsh_neonatal >= 15 Y resultado_muestra_2 >= 15
-        df['confirmado_hipotiroidismo'] = (df['tsh_neonatal'] >= 15) & (df['resultado_muestra_2'] >= 15)
-       
+                df[col] = df[col].map({"VERDADERO": True, "FALSO": False})
+        df["tsh_neonatal"] = pd.to_numeric(df.get("tsh_neonatal", 0), errors="coerce").fillna(0)
+        df["resultado_muestra_2"] = pd.to_numeric(df.get("resultado_muestra_2", 0), errors="coerce").fillna(0)
+        df["sospecha_hipotiroidismo"] = df["tsh_neonatal"] >= TSH_CORTE
+        df["confirmado_hipotiroidismo"] = (
+            (df["tsh_neonatal"] >= TSH_CORTE) & (df["resultado_muestra_2"] >= TSH_CORTE)
+        )
         return df
     except Exception as e:
-        st.error(f"Error al cargar los datos: {e}")
+        st.error(f"Error al cargar dataset principal: {e}")
         return pd.DataFrame()
 
-df = load_data()
-
-
 def graficar_mapa_casos(df):
-
-    # Diccionario de coordenadas para tus ciudades
     city_coordinates = {
-        "Bogota": [4.6097, -74.0817],
-        "Cundinamarca": [4.7000, -73.8000], # Coordenada central aproximada
-        # Agrega aquí más ciudades según aparezcan en tu columna 'ciudad'
+        "Bogota":      [4.6097, -74.0817],
+        "Cundinamarca":[4.7000, -73.8000],
     }
-
-    # Centrado en Colombia (o cerca de Bogotá para tu GeoJSON)
     m = folium.Map(location=[4.6097, -74.0817], zoom_start=6, tiles="cartodbpositron")
-    
-    # Agrupamos por 'ciudad' y sumamos 'confirmado_hipotiroidismo'
-    # Nota: Asegúrate de que 'confirmado_hipotiroidismo' sea numérico (0 y 1)
-    df_grouped = df.groupby('ciudad')['confirmado_hipotiroidismo'].sum().items()
-    
-    for city, casos in df_grouped:
+    for city, casos in df.groupby("ciudad")["confirmado_hipotiroidismo"].sum().items():
         if city in city_coordinates:
-            # Solo ponemos marcador si hay al menos 1 caso o para todas las ciudades
             folium.Marker(
                 location=city_coordinates[city],
                 popup=f"<b>{city}</b><br>Casos Confirmados: {int(casos)}",
                 tooltip=city,
-                icon=folium.Icon(color='red', icon='plus-square', prefix='fa')
+                icon=folium.Icon(color="red", icon="plus-square", prefix="fa"),
             ).add_to(m)
-        else:
-            # Opcional: mostrar advertencia si falta una coordenada
-            pass
-
-    # Mostrar en Streamlit
     st_folium(m, width=700, height=500)
 
-# Verificar que los datos se cargaron correctamente
-if df.empty:
-    st.error("No se pudieron cargar los datos. Por favor verifica el archivo CSV.")
-    st.stop()
+# ─── Función de envío SMS (Twilio) ────────────────────────────────────────────
 
-# Mostrar información general
-st.header("🔍 Información General del Dataset")
+def enviar_sms(telefono: str, mensaje: str, test_mode: bool = True):
+    """
+    Retorna (bool éxito, str mensaje_estado).
+    Si test_mode=True nunca llama a Twilio.
+    Credenciales se leen de st.secrets["twilio"].
+    """
+    if not telefono.startswith("+"):
+        telefono = "+57" + telefono.strip()
 
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Total de Registros", f"{df.shape[0]:,}")
-with col2:
-    st.metric("Casos Sospechosos (TSH ≥ 15)", f"{df['sospecha_hipotiroidismo'].sum():,}")
-with col3:
-    st.metric("Casos Confirmados", f"{df['confirmado_hipotiroidismo'].sum():,}")
-with col4:
-    # Calcular el promedio de días hasta el resultado
-    dias_promedio = round(df['dias_pasados'].mean(), 1)
-    st.metric("Promedio Días hasta Resultado", f"{dias_promedio}")
+    if test_mode:
+        return True, f"[SIMULADO] Mensaje a {telefono}: {mensaje[:60]}..."
 
-# Sidebar para filtros
-st.sidebar.header("📋 Filtros")
+    try:
+        from twilio.rest import Client
+        sid   = st.secrets["twilio"]["account_sid"]
+        token = st.secrets["twilio"]["auth_token"]
+        from_ = st.secrets["twilio"]["from_phone_number"]
+        client = Client(sid, token)
+        msg = client.messages.create(body=mensaje, from_=from_, to=telefono)
+        return True, f"Enviado — SID: {msg.sid}"
+    except KeyError:
+        return False, "Configura st.secrets['twilio'] con account_sid, auth_token y from_phone_number"
+    except Exception as e:
+        return False, f"Error Twilio: {e}"
 
-# Filtro por año
-años_disponibles = sorted(df['fecha_nacimiento'].dt.year.unique().tolist())
-años_seleccionados = st.sidebar.multiselect(
-    "Seleccionar Años:",
-    options=años_disponibles,
-    default=años_disponibles
-)
+# ═════════════════════════════════════════════════════════════════════════════
+# LAYOUT PRINCIPAL — 3 TABS
+# ═════════════════════════════════════════════════════════════════════════════
 
-# Filtro por sexo
-sexos_disponibles = sorted(df['sexo'].unique().tolist())
-sexos_seleccionados = st.sidebar.multiselect(
-    "Seleccionar Sexo:",
-    options=sexos_disponibles,
-    default=sexos_disponibles
-)
+tab_form, tab_dash, tab_alertas = st.tabs([
+    "📝  Ingreso de Datos",
+    "📊  Dashboard / Reportes",
+    "🚨  Casos Confirmados",
+])
 
-# Filtro por condición de prematuro
-prematuro_opciones = ["Todos", "Prematuros", "No Prematuros"]
-prematuro_seleccionado = st.sidebar.radio("Condición de Nacimiento:", prematuro_opciones)
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 1 — FORMULARIO DE INGRESO
+# ═════════════════════════════════════════════════════════════════════════════
 
-# Filtro por tipo de muestra
-tipos_muestra = sorted(df['tipo_muestra'].unique().tolist())
-tipo_muestra_seleccionado = st.sidebar.multiselect(
-    "Tipo de Muestra:",
-    options=tipos_muestra,
-    default=tipos_muestra
-)
+with tab_form:
+    st.markdown("## 📝 Digitalización de Tarjeta de Tamizaje")
+    st.caption("Complete los datos de la tarjeta física enviada por la IRS. Los campos marcados con ★ son obligatorios.")
 
-# Filtro por departamento
-departamentos = sorted(df['departamento'].unique().tolist())
-departamento_seleccionado = st.sidebar.multiselect(
-    "Departamento:",
-    options=departamentos,
-    default=departamentos
-)
+    # ── Inicializar session_state para el formulario ──────────────────────────
+    if "form_errors" not in st.session_state:
+        st.session_state.form_errors = []
+    if "form_submitted" not in st.session_state:
+        st.session_state.form_submitted = False
+    if "tsh1_val" not in st.session_state:
+        st.session_state.tsh1_val = 0.0
 
-# Filtro por ciudad
-ciudades = sorted(df['ciudad'].unique().tolist())
-ciudad_seleccionado = st.sidebar.multiselect(
-    "Ciudad:",
-    options=ciudades,
-    default=ciudades
-)
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 1 — ACUDIENTE / DATOS GENERALES
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown('<div class="form-section">👤  Datos del Acudiente / Institución</div>', unsafe_allow_html=True)
 
-# Filtro por estado de hipotiroidismo
-hipotiroidismo_opciones = ["Todos", "Sospechosos", "Confirmados", "Normales"]
-hipotiroidismo_seleccionado = st.sidebar.radio("Estado de Hipotiroidismo:", hipotiroidismo_opciones)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        ficha        = st.text_input("★ No. de Ficha", placeholder="369980")
+        fecha_ingreso= st.text_input("★ Fecha de Ingreso", placeholder="5-May-19",
+                                      help="Formatos: 5-May-19  |  05/05/2019  |  2019-05-05")
+        institucion  = st.text_input("★ Institución", placeholder="VICTORIA")
+    with c2:
+        ars          = st.text_input("★ ARS / EPS", placeholder="MEDIMAS")
+        historia     = st.text_input("Historia Clínica", placeholder="Número")
+        tipo_doc     = st.selectbox("★ Tipo de Documento",
+                                     ["Seleccionar...", "CC", "CE", "PA", "RC", "TI"])
+    with c3:
+        num_doc      = st.text_input("★ Número de Documento", placeholder="123456789")
+        ciudad       = st.text_input("★ Ciudad", placeholder="Bogotá")
+        departamento = st.selectbox("★ Departamento", DEPARTAMENTOS)
 
-# Aplicar filtros
-filtered_df = df.copy()
+    c4, c5 = st.columns(2)
+    with c4:
+        tel1     = st.text_input("Teléfono 1", placeholder="3130000000")
+        tipo_vinc= st.selectbox("★ Tipo de Vinculación",
+                                  ["Seleccionar...", "CONTRIBUTIVO", "SUBSIDIADO",
+                                   "VINCULADO", "PARTICULAR", "ESPECIAL"])
+    with c5:
+        tel2     = st.text_input("Teléfono 2 (opcional)")
+        direccion= st.text_input("Dirección")
 
-if años_seleccionados:
-    filtered_df = filtered_df[filtered_df['fecha_nacimiento'].dt.year.isin(años_seleccionados)]
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 2 — RECIÉN NACIDO
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown('<div class="form-section">👶  Datos del Recién Nacido</div>', unsafe_allow_html=True)
 
-if sexos_seleccionados:
-    filtered_df = filtered_df[filtered_df['sexo'].isin(sexos_seleccionados)]
+    c6, c7, c8 = st.columns(3)
+    with c6:
+        apellido1 = st.text_input("★ Primer Apellido")
+        apellido2 = st.text_input("Segundo Apellido")
+    with c7:
+        nombre    = st.text_input("★ Nombre / Hijo(a) de")
+        fecha_nac = st.text_input("★ Fecha de Nacimiento", placeholder="5-May-19")
+    with c8:
+        peso      = st.text_input("★ Peso al nacer (g)", placeholder="2890")
+        sexo      = st.selectbox("★ Sexo",
+                                  ["Seleccionar...", "MASCULINO", "FEMENINO", "INDETERMINADO"])
 
-if prematuro_seleccionado == "Prematuros":
-    filtered_df = filtered_df[filtered_df['prematuro'] == True]
-elif prematuro_seleccionado == "No Prematuros":
-    filtered_df = filtered_df[filtered_df['prematuro'] == False]
+    c9, c10 = st.columns(2)
+    with c9:
+        prematuro    = st.checkbox("Prematuro")
+        transfundido = st.checkbox("Transfundido")
+    with c10:
+        info_completa = st.checkbox("Información completa")
+        muestra_adec  = st.checkbox("Muestra adecuada")
 
-if tipo_muestra_seleccionado:
-    filtered_df = filtered_df[filtered_df['tipo_muestra'].isin(tipo_muestra_seleccionado)]
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 3 — MUESTRA 1
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown('<div class="form-section">🔬  Muestra 1</div>', unsafe_allow_html=True)
 
-if departamento_seleccionado:
-    filtered_df = filtered_df[filtered_df['departamento'].isin(departamento_seleccionado)]
+    c11, c12, c13 = st.columns(3)
+    with c11:
+        tipo_muestra1  = st.selectbox("★ Tipo de Muestra",
+                                       ["Seleccionar...", "CORDON", "TALON", "VENA"])
+        destino        = st.selectbox("★ Destino muestra",
+                                       ["Seleccionar...", "ACEPTADA", "RECHAZADA"])
+    with c12:
+        fecha_muestra1 = st.text_input("★ Fecha toma muestra 1", placeholder="5-May-19")
+        fecha_result1  = st.text_input("★ Fecha resultado 1",    placeholder="6-May-19")
+    with c13:
+        tsh1_str = st.text_input("★ Resultado TSH 1 (µIU/mL)", placeholder="7.2")
 
-if ciudad_seleccionado:
-    filtered_df = filtered_df[filtered_df['ciudad'].isin(ciudad_seleccionado)]
+    # Calcular TSH1 en tiempo real para mostrar alerta
+    tsh1_num = None
+    if tsh1_str.strip():
+        try:
+            tsh1_num = float(tsh1_str.replace(",", "."))
+        except ValueError:
+            pass
 
-# Aplicar filtro de estado de hipotiroidismo
-if hipotiroidismo_seleccionado == "Sospechosos":
-    filtered_df = filtered_df[filtered_df['sospecha_hipotiroidismo'] == True]
-elif hipotiroidismo_seleccionado == "Confirmados":
-    filtered_df = filtered_df[filtered_df['confirmado_hipotiroidismo'] == True]
-elif hipotiroidismo_seleccionado == "Normales":
-    filtered_df = filtered_df[filtered_df['sospecha_hipotiroidismo'] == False]
-
-# Mostrar el número de registros después de filtrar
-st.sidebar.markdown(f"**Registros después de filtrar:** {filtered_df.shape[0]:,}")
-
-# Umbral para TSH
-st.sidebar.header("⚙️ Configuración")
-tsh_umbral = st.sidebar.slider(
-    "Umbral TSH (mIU/L):",
-    min_value=1.0,
-    max_value=30.0,
-    value=15.0,
-    step=0.5
-)
-
-# Pestaña de resumen ejecutivo
-st.markdown("---")
-tabs = st.tabs(["Resumen Ejecutivo", "Análisis de TSH", "Análisis Temporal", "Factores de Riesgo", "Casos Confirmados"])
-
-with tabs[0]:
-    st.header("📌 Resumen Ejecutivo")
-    
-    # Estadísticas clave
-    summary_metrics = {
-        "total_casos": df.shape[0],
-        "sospechosos": df['sospecha_hipotiroidismo'].sum(),
-        "confirmados": df['confirmado_hipotiroidismo'].sum(),
-        "tasa_confirmacion": df['confirmado_hipotiroidismo'].sum() / df['sospecha_hipotiroidismo'].sum() if df['sospecha_hipotiroidismo'].sum() > 0 else 0,
-        "incidencia": df['confirmado_hipotiroidismo'].sum() / df.shape[0] if df.shape[0] > 0 else 0,
-    }
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Casos Sospechosos (TSH ≥ 15)", f"{summary_metrics['sospechosos']:,}")
-    with col2:
-        st.metric("Casos Confirmados", f"{summary_metrics['confirmados']:,}")
-    with col3:
-        st.metric("Tasa de Confirmación", f"{summary_metrics['tasa_confirmacion']:.1%}")
-    
-    # Gráfico de pirámide de diagnóstico
-    stages = ['Tamizados', 'TSH ≥ 15', 'Confirmados']
-    values = [df.shape[0], df['sospecha_hipotiroidismo'].sum(), df['confirmado_hipotiroidismo'].sum()]
-    
-    fig_funnel = go.Figure(go.Funnel(
-        y=stages,
-        x=values,
-        textinfo="value+percent initial",
-        marker={"color": ["#4682B4", "#FFA500", "#FF4500"]}
-    ))
-    
-    fig_funnel.update_layout(
-        title="Pirámide de Diagnóstico de Hipotiroidismo Congénito",
-        width=800,
-        height=500
-    )
-    
-    st.plotly_chart(fig_funnel, use_container_width=True)
-    
-    # Distribución por sexo y prematuridad
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Distribución por sexo
-        #sex_counts = filtered_df.groupby(['sexo', 'confirmado_hipotiroidismo']).size().unstack(fill_value=0)
-        #sex_counts.columns = ['Normal', 'Hipotiroidismo']
-        #sex_counts = sex_counts.reset_index()
-
-        # Agrupar y contar los casos por sexo y estado de hipotiroidismo
-        sex_counts = filtered_df.groupby(['sexo', 'confirmado_hipotiroidismo']).size().unstack(fill_value=0)
-
-        # Asegurarse de que haya exactamente 2 columnas (False y True)
-        if False not in sex_counts.columns:
-            sex_counts[False] = 0  # Agregar columna para casos no confirmados
-        if True not in sex_counts.columns:
-            sex_counts[True] = 0  # Agregar columna para casos confirmados
-
-        # Renombrar las columnas
-        sex_counts.columns = ['Normal', 'Hipotiroidismo']
-
-        # Resetear el índice para convertir 'sexo' en una columna explícita
-        sex_counts_reset = sex_counts.reset_index()
-
-        # Crear el gráfico de barras
-        fig_sex = px.bar(
-            sex_counts_reset,  # Usar el DataFrame con el índice reseteado
-            x="sexo",          # Eje X: sexo (Masculino/Femenino)
-            y=["Normal", "Hipotiroidismo"],  # Eje Y: valores de las columnas Normal y Hipotiroidismo
-            title="Distribución de Casos por Sexo",  # Título del gráfico
-            labels={
-                "value": "Cantidad de Casos",  # Etiqueta del eje Y
-                "sexo": "Sexo",                # Etiqueta del eje X
-                "variable": "Estado"           # Leyenda: Normal vs Hipotiroidismo
-            },
-            color_discrete_map={
-                "Normal": "#4682B4",       # Color para casos normales
-                "Hipotiroidismo": "#FF4500"  # Color para casos confirmados
-            },
-            barmode='group'  # Agrupar las barras (Normal y Hipotiroidismo juntas para cada sexo)
+    if tsh1_num is not None and tsh1_num >= TSH_CORTE:
+        st.markdown(
+            f'<div class="tsh-alert">⚠️  TSH1 = <strong>{tsh1_num} µIU/mL</strong> — '
+            f'Supera el umbral de {TSH_CORTE} µIU/mL. <strong>Se requiere 2ª muestra de confirmación.</strong></div>',
+            unsafe_allow_html=True,
         )
 
-        # Personalizar el diseño del gráfico
-        fig_sex.update_layout(
-            xaxis_title="Sexo",  # Etiqueta del eje X
-            yaxis_title="Cantidad de Casos",  # Etiqueta del eje Y
-            legend_title="Estado",  # Título de la leyenda
-            showlegend=True,  # Mostrar la leyenda
-            template="plotly_white"  # Usar un tema claro para el gráfico
-        )
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 4 — MUESTRA 2 (solo si TSH1 ≥ umbral)
+    # ─────────────────────────────────────────────────────────────────────────
+    necesita_m2 = tsh1_num is not None and tsh1_num >= TSH_CORTE
 
-        # Mostrar el gráfico en Streamlit
-        st.plotly_chart(fig_sex, use_container_width=True)
-        
+    ficha2 = tipo_m2 = fecha_m2 = f_res2 = tsh2_str = ""
 
-        kv2 = '''
-        fig_sex = px.bar(
-            sex_counts, 
-            x="sexo", 
-            y=["Normal", "Hipotiroidismo"],
-            title="Distribución por Sexo",
-            labels={"value": "Cantidad", "sexo": "Sexo", "variable": "Estado"},
-            color_discrete_map={"Normal": "#4682B4", "Hipotiroidismo": "#FF4500"}
-        )
-        fig_sex.update_layout(barmode='group')
-        st.plotly_chart(fig_sex, use_container_width=True)
-        '''
-    
-    with col2:
-        kv3 = '''
-        # Distribución por prematuridad
-        premature_counts = filtered_df.groupby(['prematuro', 'confirmado_hipotiroidismo']).size().unstack(fill_value=0)
-        premature_counts.columns = ['Normal', 'Hipotiroidismo']
-        premature_counts = premature_counts.reset_index()
-        premature_counts['prematuro'] = premature_counts['prematuro'].map({True: 'Prematuro', False: 'No Prematuro'})
-        
-        fig_premature = px.bar(
-            premature_counts, 
-            x="prematuro", 
-            y=["Normal", "Hipotiroidismo"],
-            title="Distribución por Prematuridad",
-            labels={"value": "Cantidad", "prematuro": "Condición", "variable": "Estado"},
-            color_discrete_map={"Normal": "#4682B4", "Hipotiroidismo": "#FF4500"}
-        )
-        fig_premature.update_layout(barmode='group')
-        st.plotly_chart(fig_premature, use_container_width=True)
-        '''
-        # Manejar valores NaN en 'prematuro' (eliminar o rellenar)
-        #filtered_df = filtered_df.dropna(subset=['prematuro'])  # Opción 1: Eliminar filas con NaN
-        filtered_df['prematuro'] = filtered_df['prematuro'].fillna(False)  # Opción 2: Rellenar NaN con False
-        
-        # Distribución por prematuridad
-        premature_counts = filtered_df.groupby(['prematuro', 'confirmado_hipotiroidismo']).size().unstack(fill_value=0)
-        #print(premature_counts)
-        #print(filtered_df[['prematuro', 'confirmado_hipotiroidismo']].head())
-        # Asegurarse de que haya exactamente 2 columnas (False y True)
-        if False not in premature_counts.columns:
-            premature_counts[False] = 0  # Agregar columna para casos no confirmados
-        if True not in premature_counts.columns:
-            premature_counts[True] = 0  # Agregar columna para casos confirmados
+    if necesita_m2:
+        st.markdown('<div class="form-section">🔁  Muestra 2 — Confirmación</div>', unsafe_allow_html=True)
+        c14, c15, c16 = st.columns(3)
+        with c14:
+            ficha2   = st.text_input("No. Ficha 2")
+            tipo_m2  = st.selectbox("★ Tipo muestra 2",
+                                     ["Seleccionar...", "CORDON", "TALON", "VENA"],
+                                     key="tipo_m2")
+        with c15:
+            fecha_m2 = st.text_input("★ Fecha toma muestra 2", placeholder="5-May-19", key="fm2")
+            f_res2   = st.text_input("★ Fecha resultado 2",    placeholder="6-May-19", key="fr2")
+        with c16:
+            tsh2_str = st.text_input("★ Resultado TSH 2 (µIU/mL)", placeholder="18.5", key="tsh2")
 
-        # Renombrar las columnas
-        premature_counts.columns = ['Normal', 'Hipotiroidismo']
+        if tsh2_str.strip():
+            try:
+                tsh2_num = float(tsh2_str.replace(",", "."))
+                if tsh2_num >= TSH_CORTE:
+                    st.error(f"🚨 TSH2 = {tsh2_num} µIU/mL — **HIPOTIROIDISMO CONFIRMADO**. "
+                             f"Se deberá notificar al paciente y a la IRS.")
+                else:
+                    st.success(f"✅ TSH2 = {tsh2_num} µIU/mL — Resultado normal en segunda muestra.")
+            except ValueError:
+                pass
 
-        # Resetear el índice para convertir 'prematuro' en una columna explícita
-        premature_counts_reset = premature_counts.reset_index()
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 5 — MUESTRA RECHAZADA
+    # ─────────────────────────────────────────────────────────────────────────
+    with st.expander("❌  Muestra rechazada (opcional)"):
+        m_rechazada = st.checkbox("¿Hubo muestra rechazada?")
+        c17, c18 = st.columns(2)
+        with c17:
+            fecha_rechaz     = st.text_input("Fecha toma rechazada", key="frech")
+            res_rechaz       = st.selectbox("Resultado rechazada",
+                                             ["", "PENDIENTE", "NORMAL", "ALTERADO"])
+        with c18:
+            fecha_res_rechaz = st.text_input("Fecha resultado rechazada", key="frr")
 
-        # Convertir la columna 'prematuro' a etiquetas legibles
-        premature_counts_reset['prematuro'] = premature_counts_reset['prematuro'].map({True: 'Prematuro', False: 'No Prematuro'})
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECCIÓN 6 — SMS AL GUARDAR
+    # ─────────────────────────────────────────────────────────────────────────
+    if necesita_m2:
+        st.markdown('<div class="form-section">📱  Notificación SMS al guardar</div>', unsafe_allow_html=True)
+        st.caption("Si el caso es positivo confirmado, se puede enviar SMS al paciente y/o a la IRS al momento de guardar.")
 
-        # Crear el gráfico de barras
-        fig_premature = px.bar(
-            premature_counts_reset, 
-            x="prematuro", 
-            y=["Normal", "Hipotiroidismo"],
-            title="Distribución de Casos por Prematuridad",
-            labels={"value": "Cantidad de Casos", "prematuro": "Prematuridad", "variable": "Estado"},
-            color_discrete_map={"Normal": "#4682B4", "Hipotiroidismo": "#FF4500"},
-            barmode='group'
-        )
-
-        # Personalizar el diseño del gráfico
-        fig_premature.update_layout(
-            xaxis_title="Prematuridad",
-            yaxis_title="Cantidad de Casos",
-            legend_title="Estado",
-            showlegend=True,
-            template="plotly_white"
-        )
-
-        # Mostrar el gráfico en Streamlit
-        st.plotly_chart(fig_premature, use_container_width=True)
-
-
-    graficar_mapa_casos(filtered_df)
-
-
-with tabs[1]:
-    st.header("📊 Análisis de TSH Neonatal")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Histograma de valores TSH
-        st.subheader("Distribución de TSH Neonatal")
-        
-        # Filtrar valores extremos para mejor visualización
-        tsh_max_visual = filtered_df['tsh_neonatal'].quantile(0.99)
-        df_tsh_visual = filtered_df[filtered_df['tsh_neonatal'] <= tsh_max_visual]
-        
-        fig_tsh_hist = px.histogram(
-            df_tsh_visual, 
-            x='tsh_neonatal',
-            nbins=30,
-            color_discrete_sequence=['#3CB371'],
-            labels={'tsh_neonatal': 'TSH Neonatal (mIU/L)'}
-        )
-        
-        # Añadir línea vertical para el umbral
-        fig_tsh_hist.add_vline(
-            x=15, 
-            line_dash="dash", 
-            line_color="red",
-            annotation_text=f"Umbral: 15 mIU/L",
-            annotation_position="top right"
-        )
-        
-        fig_tsh_hist.update_layout(xaxis_title="Valor de TSH (mIU/L)", yaxis_title="Frecuencia")
-        st.plotly_chart(fig_tsh_hist, use_container_width=True)
-    
-    with col2:
-        # Comparación de TSH inicial vs segunda muestra
-        st.subheader("Comparación TSH Inicial vs Segunda Muestra")
-        
-        # Filtrar solo casos con segunda muestra
-        df_with_second = filtered_df.dropna(subset=['tsh_neonatal', 'resultado_muestra_2'])
-        
-        fig_scatter_tsh = px.scatter(
-            df_with_second,
-            x='tsh_neonatal',
-            y='resultado_muestra_2',
-            color='confirmado_hipotiroidismo',
-            color_discrete_map={True: '#FF4500', False: '#4682B4'},
-            labels={
-                'tsh_neonatal': 'TSH Neonatal Primera Muestra (mIU/L)',
-                'resultado_muestra_2': 'TSH Segunda Muestra (mIU/L)',
-                'confirmado_hipotiroidismo': 'Hipotiroidismo Confirmado'
-            },
-            opacity=0.7
-        )
-        
-        # Añadir líneas de umbral
-        fig_scatter_tsh.add_hline(
-            y=15, 
-            line_dash="dash", 
-            line_color="red"
-        )
-        fig_scatter_tsh.add_vline(
-            x=15, 
-            line_dash="dash", 
-            line_color="red"
-        )
-        
-        fig_scatter_tsh.update_layout(
-            xaxis_title="TSH Primera Muestra (mIU/L)", 
-            yaxis_title="TSH Segunda Muestra (mIU/L)"
-        )
-        st.plotly_chart(fig_scatter_tsh, use_container_width=True)
-    
-    # Boxplot de TSH por sexo y prematuridad
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("TSH por Sexo")
-        
-        fig_box_sex = px.box(
-            filtered_df,
-            x='sexo',
-            y='tsh_neonatal',
-            color='sexo',
-            points="outliers",
-            labels={'sexo': 'Sexo', 'tsh_neonatal': 'TSH Neonatal (mIU/L)'},
-            # OPCIÓN A: Escala logarítmica (evita el aplanamiento de forma matemática)
-            # log_y=True 
-        )
-        
-        # OPCIÓN B: Limitar el rango del eje Y manualmente (evita el aplanamiento visual)
-        # Ajustamos el rango de 0 a un poco más del umbral (ej. 30) o el percentil 95
-        fig_box_sex.update_yaxes(range=[0, 40]) 
-
-        fig_box_sex.add_hline(
-            y=15, 
-            line_dash="dash", 
-            line_color="red",
-            annotation_text="Umbral: 15 mIU/L",
-            annotation_position="top right"
-        )
-
-        # Mejorar la estética para que no se vea "apretado"
-        fig_box_sex.update_layout(
-            height=500,  # Forzar una altura fija ayuda a que no se vea aplanado
-            margin=dict(l=20, r=20, t=40, b=20)
-        )
-        
-        st.plotly_chart(fig_box_sex, use_container_width=True)
-    
-    with col2:
-        st.subheader("TSH por Prematuridad")
-        
-        # 1. Crear el gráfico base
-        fig_box_premature = px.box(
-            filtered_df,
-            x='prematuro',
-            y='tsh_neonatal',
-            color='prematuro',
-            points="outliers",
-            labels={'prematuro': 'Condición', 'tsh_neonatal': 'TSH Neonatal (mIU/L)'},
-            category_orders={"prematuro": [True, False]} # Mantenemos el orden lógico
-        )
-
-        # 2. NORMALIZACIÓN VISUAL (Evita el efecto aplanado)
-        # Calculamos un límite superior dinámico: el percentil 95 o al menos 30 para ver el umbral
-        if not filtered_df.empty:
-            ymax = max(30, filtered_df['tsh_neonatal'].quantile(0.95))
-            fig_box_premature.update_yaxes(range=[0, ymax])
-
-        # 3. Ajuste de etiquetas y estética
-        fig_box_premature.update_xaxes(
-            ticktext=["Prematuro", "No Prematuro"], 
-            tickvals=[True, False]
-        )
-        
-        fig_box_premature.add_hline(
-            y=15, 
-            line_dash="dash", 
-            line_color="red",
-            annotation_text="Umbral: 15 mIU/L",
-            annotation_position="top right"
-        )
-
-        fig_box_premature.update_layout(
-            height=500, # Altura fija para consistencia visual
-            showlegend=False # Opcional: ocultar leyenda si las etiquetas del eje X son claras
-        )
-        
-        st.plotly_chart(fig_box_premature, use_container_width=True)
-
-with tabs[2]:
-    st.header("⏱️ Análisis Temporal")
-    
-    # Agrupar datos por mes y año
-    filtered_df['año_mes'] = filtered_df['fecha_nacimiento'].dt.to_period('M')
-    
-    # Tendencia temporal de casos
-    temporal_df = filtered_df.groupby(['año_mes']).agg(
-        total_casos=('tsh_neonatal', 'count'),
-        casos_sospechosos=('sospecha_hipotiroidismo', 'sum'),
-        casos_confirmados=('confirmado_hipotiroidismo', 'sum'),
-        tsh_promedio=('tsh_neonatal', 'mean')
-    ).reset_index()
-    
-    temporal_df['año_mes'] = temporal_df['año_mes'].dt.to_timestamp()
-    temporal_df['tasa_confirmacion'] = temporal_df['casos_confirmados'] / temporal_df['casos_sospechosos']
-    temporal_df['incidencia'] = temporal_df['casos_confirmados'] / temporal_df['total_casos']
-    
-    # Gráfico de línea para casos y tasa de confirmación
-    fig_temporal = go.Figure()
-    
-    fig_temporal.add_trace(go.Scatter(
-        x=temporal_df['año_mes'],
-        y=temporal_df['casos_sospechosos'],
-        mode='lines+markers',
-        name='Casos Sospechosos',
-        line=dict(color='#FFA500', width=2)
-    ))
-    
-    fig_temporal.add_trace(go.Scatter(
-        x=temporal_df['año_mes'],
-        y=temporal_df['casos_confirmados'],
-        mode='lines+markers',
-        name='Casos Confirmados',
-        line=dict(color='#FF4500', width=2)
-    ))
-    
-    fig_temporal.add_trace(go.Scatter(
-        x=temporal_df['año_mes'],
-        y=temporal_df['tasa_confirmacion'],
-        mode='lines',
-        name='Tasa de Confirmación',
-        line=dict(color='#4682B4', width=2, dash='dot'),
-        yaxis='y2'
-    ))
-    
-    fig_temporal.update_layout(
-        title='Evolución Temporal de Casos de Hipotiroidismo Congénito',
-        xaxis_title='Fecha',
-        yaxis=dict(
-            title={'text': 'Número de Casos', 'font': {'color': '#FF4500'}},  # Corrección aquí
-            tickfont=dict(color='#FF4500')
-        ),
-        yaxis2=dict(
-            title={'text': 'Tasa de Confirmación', 'font': {'color': '#4682B4'}},  # Corrección aquí
-            tickfont=dict(color='#4682B4'),
-            anchor='x',
-            overlaying='y',
-            side='right',
-            range=[0, 1]
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="center",
-            x=0.5
-        )
-    )
-    
-    st.plotly_chart(fig_temporal, use_container_width=True)
-    
-    # Análisis de estacionalidad (por mes)
-    filtered_df['mes'] = filtered_df['fecha_nacimiento'].dt.month
-    
-    seasonality_df = filtered_df.groupby('mes').agg(
-        total_casos=('tsh_neonatal', 'count'),
-        casos_sospechosos=('sospecha_hipotiroidismo', 'sum'),
-        casos_confirmados=('confirmado_hipotiroidismo', 'sum'),
-        tsh_promedio=('tsh_neonatal', 'mean')
-    ).reset_index()
-    
-    seasonality_df['mes_nombre'] = seasonality_df['mes'].map({
-        1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',
-        7: 'Julio', 8: 'Agosto', 9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-    })
-    
-    fig_seasonality = px.line(
-        seasonality_df,
-        x='mes',
-        y=['casos_sospechosos', 'casos_confirmados', 'tsh_promedio'],
-        labels={
-            'mes': 'Mes',
-            'value': 'Valor',
-            'variable': 'Métrica'
-        },
-        title='Estacionalidad de Casos por Mes',
-        color_discrete_map={
-            'casos_sospechosos': '#FFA500',
-            'casos_confirmados': '#FF4500',
-            'tsh_promedio': '#4682B4'
-        }
-    )
-    
-    fig_seasonality.update_layout(
-        xaxis=dict(
-            tickvals=list(range(1, 13)),
-            ticktext=['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-        )
-    )
-    
-    st.plotly_chart(fig_seasonality, use_container_width=True)
-    
-    # Análisis de tiempos de procesamiento
-    st.subheader("Análisis de Tiempos de Procesamiento")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Histograma de días hasta el resultado
-        fig_dias = px.histogram(
-            filtered_df,
-            x='dias_pasados',
-            nbins=20,
-            title='Distribución de Días hasta el Resultado',
-            labels={'dias_pasados': 'Días hasta Resultado'},
-            color_discrete_sequence=['#4682B4']
-        )
-        st.plotly_chart(fig_dias, use_container_width=True)
-    
-    with col2:
-        # Comparación de tiempos entre casos normales y anormales
-        tiempos_df = filtered_df.groupby('sospecha_hipotiroidismo')['dias_pasados'].mean().reset_index()
-        tiempos_df['sospecha_hipotiroidismo'] = tiempos_df['sospecha_hipotiroidismo']
-
-
-        tiempos_df['Estado'] = tiempos_df['sospecha_hipotiroidismo'].map({True: 'Sospechoso (TSH ≥ 15)', False: 'Normal (TSH < 15)'})
-        
-        fig_tiempos = px.bar(
-            tiempos_df,
-            x='Estado',
-            y='dias_pasados',
-            title='Tiempo Promedio de Procesamiento por Estado',
-            labels={'dias_pasados': 'Días Promedio', 'Estado': 'Estado'},
-            color='Estado',
-            color_discrete_map={
-                'Sospechoso (TSH ≥ 15)': '#FF4500',
-                'Normal (TSH < 15)': '#4682B4'
-            }
-        )
-        st.plotly_chart(fig_tiempos, use_container_width=True)
-
-with tabs[3]:
-    st.header("🔬 Análisis de Factores de Riesgo")
-    
-    # Relación entre peso al nacer y TSH
-    st.subheader("Relación entre Peso al Nacer y TSH")
-    
-    # Conversión de peso a kilogramos para mejor visualización
-    filtered_df['peso_kg'] = filtered_df['peso'] / 1000
-    
-    fig_peso_tsh = px.scatter(
-        filtered_df,
-        x='peso_kg',
-        y='tsh_neonatal',
-        color='confirmado_hipotiroidismo',
-        color_discrete_map={True: '#FF4500', False: '#4682B4'},
-        labels={
-            'peso_kg': 'Peso al Nacer (kg)',
-            'tsh_neonatal': 'TSH Neonatal (mIU/L)',
-            'confirmado_hipotiroidismo': 'Hipotiroidismo Confirmado'
-        },
-        trendline="ols",
-        opacity=0.7
-    )
-    
-    fig_peso_tsh.add_hline(
-        y=15, 
-        line_dash="dash", 
-        line_color="red",
-        annotation_text="Umbral TSH: 15 mIU/L",
-        annotation_position="top right"
-    )
-    
-    st.plotly_chart(fig_peso_tsh, use_container_width=True)
-    
-    # Estadísticas por factores de riesgo
-    st.subheader("Incidencia por Factores de Riesgo")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Incidencia por tipo de muestra
-        tipo_muestra_df = filtered_df.groupby('tipo_muestra').agg(
-            total=('id', 'count'),
-            confirmados=('confirmado_hipotiroidismo', 'sum')
-        ).reset_index()
-        
-        tipo_muestra_df['incidencia'] = (tipo_muestra_df['confirmados'] / tipo_muestra_df['total']) * 100
-        
-        fig_tipo_muestra = px.bar(
-            tipo_muestra_df,
-            x='tipo_muestra',
-            y='incidencia',
-            title='Incidencia por Tipo de Muestra',
-            labels={'incidencia': 'Incidencia (%)', 'tipo_muestra': 'Tipo de Muestra'},
-            color='incidencia',
-            color_continuous_scale='Reds'
-        )
-        
-        st.plotly_chart(fig_tipo_muestra, use_container_width=True)
-    
-    with col2:
-        # Incidencia por sexo
-        sexo_df = filtered_df.groupby('sexo').agg(
-            total=('id', 'count'),
-            confirmados=('confirmado_hipotiroidismo', 'sum')
-        ).reset_index()
-        
-        sexo_df['incidencia'] = (sexo_df['confirmados'] / sexo_df['total']) * 100
-        
-        fig_sexo = px.bar(
-            sexo_df,
-            x='sexo',
-            y='incidencia',
-            title='Incidencia por Sexo',
-            labels={'incidencia': 'Incidencia (%)', 'sexo': 'Sexo'},
-            color='incidencia',
-            color_continuous_scale='Reds'
-        )
-        
-        st.plotly_chart(fig_sexo, use_container_width=True)
-    
-    # Factores combinados: prematuridad y peso
-    st.subheader("Factores Combinados: Prematuridad y Peso")
-    
-    # Crear rangos de peso
-    bins = [0, 1500, 2500, 4000, 10000]
-    labels = ['Muy bajo (<1.5kg)', 'Bajo (1.5-2.5kg)', 'Normal (2.5-4kg)', 'Alto (>4kg)']
-    filtered_df['rango_peso'] = pd.cut(filtered_df['peso'], bins=bins, labels=labels)
-    
-    # Agrupar por prematuridad y rango de peso
-    peso_prematuro_df = filtered_df.groupby(['prematuro', 'rango_peso']).agg(
-        total=('id', 'count'),
-        confirmados=('confirmado_hipotiroidismo', 'sum')
-    ).reset_index()
-    
-    peso_prematuro_df['incidencia'] = (peso_prematuro_df['confirmados'] / peso_prematuro_df['total']) * 100
-    peso_prematuro_df['prematuro_label'] = peso_prematuro_df['prematuro'].map({True: 'Prematuro', False: 'No Prematuro'})
-    
-    fig_peso_prematuro = px.bar(
-        peso_prematuro_df,
-        x='rango_peso',
-        y='incidencia',
-        color='prematuro_label',
-        barmode='group',
-        title='Incidencia por Peso y Prematuridad',
-        labels={
-            'incidencia': 'Incidencia (%)', 
-            'rango_peso': 'Rango de Peso', 
-            'prematuro_label': 'Condición'
-        },
-        color_discrete_map={'Prematuro': '#FF4500', 'No Prematuro': '#4682B4'}
-    )
-    
-    st.plotly_chart(fig_peso_prematuro, use_container_width=True)
-    
-    # Matriz de correlación entre variables numéricas
-    st.subheader("Correlaciones entre Variables Numéricas")
-    
-    # Convertir la columna 'sexo' a valores numéricos
-    filtered_df['sexo_num'] = filtered_df['sexo'].map({'MASCULINO': 0, 'FEMENINO': 1})
-
-    # Seleccionar solo columnas numéricas para la correlación
-    numeric_cols = ['peso', 'tsh_neonatal', 'resultado_muestra_2', 'dias_pasados', 'sexo_num']
-    corr_df = filtered_df[numeric_cols].corr()
-    
-    fig_corr = px.imshow(
-        corr_df,
-        text_auto=True,
-        aspect="auto",
-        color_continuous_scale='RdBu_r',
-        title='Matriz de Correlación'
-    )
-    
-    st.plotly_chart(fig_corr, use_container_width=True)
-
-
-with tabs[4]:
-
-    st.header("🚨 Análisis de Casos Confirmados")
-    
-    # Filtrar solo casos confirmados
-    confirmed_df = filtered_df[filtered_df['confirmado_hipotiroidismo'] == True]
-   
-    if confirmed_df.empty:
-        st.warning("No hay casos confirmados con los filtros actuales.")
+        c_sms1, c_sms2 = st.columns(2)
+        with c_sms1:
+            enviar_al_paciente = st.checkbox("Notificar al paciente/acudiente por SMS")
+            if enviar_al_paciente:
+                tel_paciente = st.text_input("Teléfono paciente",
+                                              value=tel1 or tel2,
+                                              placeholder="+573130000000",
+                                              key="tel_pac")
+                msg_paciente = st.text_area(
+                    "Mensaje paciente",
+                    value=(f"Alerta: El resultado del tamizaje de hipotiroidismo de su hijo(a) "
+                           f"es POSITIVO (TSH: {tsh2_str} µIU/mL). "
+                           f"Por favor contacte a {ars} para iniciar tratamiento urgente."),
+                    height=100, key="msg_pac",
+                )
+        with c_sms2:
+            enviar_a_irs = st.checkbox("Notificar a la IRS por SMS")
+            if enviar_a_irs:
+                tel_irs  = st.text_input("Teléfono IRS", placeholder="+573130000000", key="tel_irs")
+                msg_irs  = st.text_area(
+                    "Mensaje IRS",
+                    value=(f"Caso positivo: Paciente {apellido1} {apellido2}, "
+                           f"Ciudad: {ciudad}, TSH: {tsh2_str} µIU/mL. "
+                           f"ARS: {ars}. Requiere seguimiento urgente."),
+                    height=100, key="msg_irs",
+                )
+        sms_test_mode = st.checkbox("🧪 Modo de prueba SMS (no envía realmente)", value=True)
     else:
-        # Sección de envío de alertas por SMS con Twilio
-        st.subheader("Enviar Alerta por SMS")
-        
-        # Seleccionar caso para enviar alerta
-        selected_case = st.selectbox(
-            "Seleccionar caso para enviar alerta:",
-            options=confirmed_df.index,
-            format_func=lambda x: f"ID: {confirmed_df.loc[x, 'id']} - {confirmed_df.loc[x, 'ciudad']}"
-        )
-        
-        # Obtener la fila seleccionada
-        fila = confirmed_df.loc[selected_case]
-        
-        # Mostrar detalles del caso seleccionado
+        enviar_al_paciente = False
+        enviar_a_irs = False
+        sms_test_mode = True
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # BOTÓN GUARDAR
+    # ─────────────────────────────────────────────────────────────────────────
+    st.markdown("---")
+    col_btn1, col_btn2 = st.columns([1, 3])
+    with col_btn1:
+        guardar = st.button("💾  Guardar Registro", use_container_width=True, type="primary")
+
+    if guardar:
+        errors = []
+
+        # Validar campos obligatorios simples
+        for val, label in [
+            (ficha, "No. de Ficha"), (institucion, "Institución"),
+            (ars, "ARS"), (num_doc, "Número Documento"),
+            (ciudad, "Ciudad"), (apellido1, "Primer Apellido"),
+            (nombre, "Nombre"),
+        ]:
+            if not val.strip():
+                errors.append(f"**{label}** es obligatorio")
+
+        # Spinners
+        for val, label in [
+            (tipo_doc, "Tipo de Documento"), (departamento, "Departamento"),
+            (sexo, "Sexo"), (tipo_vinc, "Tipo Vinculación"),
+            (tipo_muestra1, "Tipo de Muestra"), (destino, "Destino muestra"),
+        ]:
+            if not val or val == "Seleccionar...":
+                errors.append(f"**{label}** es obligatorio")
+
+        # Fechas
+        d_fi, e = val_fecha(fecha_ingreso, "Fecha de ingreso")
+        if e: errors.append(e)
+        d_fn, e = val_fecha(fecha_nac, "Fecha de Nacimiento")
+        if e: errors.append(e)
+        if d_fi and d_fn:
+            if d_fn > d_fi:
+                errors.append("Fecha de nacimiento no puede ser posterior a la fecha de ingreso")
+            if (date.today() - d_fn).days > 365:
+                errors.append("Fecha de nacimiento inusual (más de 1 año atrás)")
+
+        _, e = val_fecha(fecha_muestra1, "Fecha toma muestra 1")
+        if e: errors.append(e)
+        d_r1, e = val_fecha(fecha_result1, "Fecha resultado 1")
+        if e: errors.append(e)
+
+        # Peso
+        v_peso, e = val_peso(peso)
+        if e: errors.append(e)
+
+        # TSH1
+        v_tsh1, e = val_tsh(tsh1_str, "TSH 1")
+        if e: errors.append(e)
+
+        # Muestra 2
+        v_tsh2 = None
+        if necesita_m2:
+            v_tsh2, e = val_tsh(tsh2_str if tsh2_str else "", "TSH 2")
+            if e: errors.append(e)
+            if not tipo_m2 or tipo_m2 == "Seleccionar...":
+                errors.append("Tipo de muestra 2 es obligatorio")
+            _, e = val_fecha(fecha_m2, "Fecha toma muestra 2")
+            if e: errors.append(e)
+            _, e = val_fecha(f_res2, "Fecha resultado 2")
+            if e: errors.append(e)
+
+        # ── Mostrar errores o guardar ─────────────────────────────────────
+        if errors:
+            st.error(f"**Se encontraron {len(errors)} error(es):**")
+            for err in errors:
+                st.markdown(f"- {err}")
+        else:
+            # Construir fila
+            row = {
+                "Id":                           next_id(),
+                "No de ficha":                  ficha.strip(),
+                "Fecha de ingreso":             fecha_ingreso.strip(),
+                "Institucion":                  institucion.strip(),
+                "ARS":                          ars.strip(),
+                "Historia clinica":             historia.strip(),
+                "Tipo de Documento":            tipo_doc,
+                "Numero de Documento":          num_doc.strip(),
+                "Ciudad":                       ciudad.strip(),
+                "Departamento":                 departamento,
+                "Telefono uno":                 tel1.strip() or "0",
+                "Telefono dos":                 tel2.strip() or "0",
+                "Direccion":                    direccion.strip(),
+                "Primer Apellido":              apellido1.strip(),
+                "Segundo Apellido":             apellido2.strip(),
+                "Nombre Hijo de":               nombre.strip(),
+                "Fecha de Nacimiento":          fecha_nac.strip(),
+                "Peso":                         v_peso,
+                "Sexo":                         sexo,
+                "Prematuro":                    "VERDADERO" if prematuro else "FALSO",
+                "Transfundido":                 "VERDADERO" if transfundido else "FALSO",
+                "Informacion completa":         "VERDADERO" if info_completa else "FALSO",
+                "Muestra adecuada":             "VERDADERO" if muestra_adec else "FALSO",
+                "Destino muestra":              destino,
+                "Tipo de muestra":              tipo_muestra1,
+                "Fecha toma de la muestra":     fecha_muestra1.strip(),
+                "Fecha de resultado":           fecha_result1.strip(),
+                "Resultados TSH neonatal":      v_tsh1,
+                "No de ficha dos":              ficha2.strip() or "0",
+                "Tipo de muestra 2":            tipo_m2 if necesita_m2 and tipo_m2 != "Seleccionar..." else "",
+                "Fecha toma de la muestra 2":   fecha_m2.strip() if necesita_m2 else "",
+                "Fecha resultado muestra 2":    f_res2.strip() if necesita_m2 else "",
+                "Resultado toma de muestra 2":  v_tsh2 if v_tsh2 else "",
+                "Contador":                     "1" if necesita_m2 else "0",
+                "muestra rechazada":            "VERDADERO" if m_rechazada else "FALSO",
+                "Fecha toma rechazada":         fecha_rechaz.strip() if m_rechazada else "",
+                "Tipo de Vinculacion":          tipo_vinc,
+                "Resultado Rechazada":          res_rechaz if m_rechazada else "",
+                "Fecha resultado rechazada":    fecha_res_rechaz.strip() if m_rechazada else "",
+            }
+            guardar_registro(row)
+
+            st.markdown(
+                f'<div class="success-box">✅ Registro <strong>#{row["Id"]}</strong> guardado '
+                f'correctamente en <code>{CSV_REGISTROS}</code></div>',
+                unsafe_allow_html=True,
+            )
+
+            # ── Envío SMS ─────────────────────────────────────────────────
+            sms_log = st.session_state.setdefault("sms_log", [])
+
+            confirmado_ahora = (v_tsh2 is not None and v_tsh2 >= TSH_CORTE)
+
+            if confirmado_ahora:
+                if enviar_al_paciente and tel_paciente:
+                    ok, status = enviar_sms(tel_paciente, msg_paciente, sms_test_mode)
+                    sms_log.append({
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "id_caso":   row["Id"],
+                        "destino":   "Paciente",
+                        "telefono":  tel_paciente,
+                        "status":    status,
+                    })
+                    if ok:
+                        st.success(f"📱 SMS paciente: {status}")
+                    else:
+                        st.error(f"📱 SMS paciente fallido: {status}")
+
+                if enviar_a_irs and tel_irs:
+                    ok, status = enviar_sms(tel_irs, msg_irs, sms_test_mode)
+                    sms_log.append({
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "id_caso":   row["Id"],
+                        "destino":   "IRS",
+                        "telefono":  tel_irs,
+                        "status":    status,
+                    })
+                    if ok:
+                        st.success(f"🏥 SMS IRS: {status}")
+                    else:
+                        st.error(f"🏥 SMS IRS fallido: {status}")
+            elif necesita_m2 and not confirmado_ahora:
+                st.info("TSH2 normal — no se requiere notificación de caso positivo.")
+
+    # ── Historial de envíos de esta sesión ────────────────────────────────────
+    if st.session_state.get("sms_log"):
+        with st.expander("📋  Historial de SMS enviados en esta sesión"):
+            st.dataframe(pd.DataFrame(st.session_state["sms_log"]), use_container_width=True)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 2 — DASHBOARD (código original intacto)
+# ═════════════════════════════════════════════════════════════════════════════
+
+with tab_dash:
+
+    df = load_data()
+
+    if df.empty:
+        st.error("No se pudieron cargar los datos. Verifica el archivo CSV en data/")
+        st.stop()
+
+    # ── Métricas generales ────────────────────────────────────────────────────
+    st.header("🔍 Información General del Dataset")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total de Registros", f"{df.shape[0]:,}")
+    with col2:
+        st.metric(f"Casos Sospechosos (TSH ≥ {TSH_CORTE})", f"{df['sospecha_hipotiroidismo'].sum():,}")
+    with col3:
+        st.metric("Casos Confirmados", f"{df['confirmado_hipotiroidismo'].sum():,}")
+    with col4:
+        dias_promedio = round(df["dias_pasados"].mean(), 1) if "dias_pasados" in df.columns else "—"
+        st.metric("Promedio Días hasta Resultado", f"{dias_promedio}")
+
+    # ── Sidebar filtros ───────────────────────────────────────────────────────
+    st.sidebar.header("📋 Filtros")
+
+    años_disponibles = sorted(df["fecha_nacimiento"].dt.year.dropna().unique().tolist()) if "fecha_nacimiento" in df.columns else []
+    años_seleccionados = st.sidebar.multiselect("Seleccionar Años:", options=años_disponibles, default=años_disponibles)
+
+    sexos_disponibles = sorted(df["sexo"].dropna().unique().tolist()) if "sexo" in df.columns else []
+    sexos_seleccionados = st.sidebar.multiselect("Seleccionar Sexo:", options=sexos_disponibles, default=sexos_disponibles)
+
+    prematuro_opciones = ["Todos", "Prematuros", "No Prematuros"]
+    prematuro_seleccionado = st.sidebar.radio("Condición de Nacimiento:", prematuro_opciones)
+
+    tipos_muestra = sorted(df["tipo_muestra"].dropna().unique().tolist()) if "tipo_muestra" in df.columns else []
+    tipo_muestra_seleccionado = st.sidebar.multiselect("Tipo de Muestra:", options=tipos_muestra, default=tipos_muestra)
+
+    departamentos = sorted(df["departamento"].dropna().unique().tolist()) if "departamento" in df.columns else []
+    departamento_seleccionado = st.sidebar.multiselect("Departamento:", options=departamentos, default=departamentos)
+
+    ciudades = sorted(df["ciudad"].dropna().unique().tolist()) if "ciudad" in df.columns else []
+    ciudad_seleccionado = st.sidebar.multiselect("Ciudad:", options=ciudades, default=ciudades)
+
+    hipotiroidismo_opciones = ["Todos", "Sospechosos", "Confirmados", "Normales"]
+    hipotiroidismo_seleccionado = st.sidebar.radio("Estado de Hipotiroidismo:", hipotiroidismo_opciones)
+
+    st.sidebar.header("⚙️ Configuración")
+    tsh_umbral = st.sidebar.slider("Umbral TSH (mIU/L):", min_value=1.0, max_value=30.0, value=float(TSH_CORTE), step=0.5)
+
+    # ── Aplicar filtros ───────────────────────────────────────────────────────
+    filtered_df = df.copy()
+    if años_seleccionados and "fecha_nacimiento" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["fecha_nacimiento"].dt.year.isin(años_seleccionados)]
+    if sexos_seleccionados and "sexo" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["sexo"].isin(sexos_seleccionados)]
+    if prematuro_seleccionado == "Prematuros" and "prematuro" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["prematuro"] == True]
+    elif prematuro_seleccionado == "No Prematuros" and "prematuro" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["prematuro"] == False]
+    if tipo_muestra_seleccionado and "tipo_muestra" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["tipo_muestra"].isin(tipo_muestra_seleccionado)]
+    if departamento_seleccionado and "departamento" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["departamento"].isin(departamento_seleccionado)]
+    if ciudad_seleccionado and "ciudad" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["ciudad"].isin(ciudad_seleccionado)]
+    if hipotiroidismo_seleccionado == "Sospechosos":
+        filtered_df = filtered_df[filtered_df["sospecha_hipotiroidismo"] == True]
+    elif hipotiroidismo_seleccionado == "Confirmados":
+        filtered_df = filtered_df[filtered_df["confirmado_hipotiroidismo"] == True]
+    elif hipotiroidismo_seleccionado == "Normales":
+        filtered_df = filtered_df[filtered_df["sospecha_hipotiroidismo"] == False]
+
+    st.sidebar.markdown(f"**Registros filtrados:** {filtered_df.shape[0]:,}")
+
+    # ── Tabs del dashboard ────────────────────────────────────────────────────
+    d_tabs = st.tabs(["Resumen Ejecutivo", "Análisis de TSH", "Análisis Temporal",
+                      "Factores de Riesgo"])
+
+    # ── Resumen Ejecutivo ─────────────────────────────────────────────────────
+    with d_tabs[0]:
+        st.header("📌 Resumen Ejecutivo")
+
+        tasa_conf = (df["confirmado_hipotiroidismo"].sum() / df["sospecha_hipotiroidismo"].sum()
+                     if df["sospecha_hipotiroidismo"].sum() > 0 else 0)
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric(f"Casos Sospechosos (TSH ≥ {TSH_CORTE})", f"{df['sospecha_hipotiroidismo'].sum():,}")
+        with col2: st.metric("Casos Confirmados", f"{df['confirmado_hipotiroidismo'].sum():,}")
+        with col3: st.metric("Tasa de Confirmación", f"{tasa_conf:.1%}")
+
+        stages = ["Tamizados", f"TSH ≥ {TSH_CORTE}", "Confirmados"]
+        values = [df.shape[0], int(df["sospecha_hipotiroidismo"].sum()), int(df["confirmado_hipotiroidismo"].sum())]
+        fig_funnel = go.Figure(go.Funnel(
+            y=stages, x=values, textinfo="value+percent initial",
+            marker={"color": ["#4682B4", "#FFA500", "#FF4500"]},
+        ))
+        fig_funnel.update_layout(title="Pirámide de Diagnóstico de Hipotiroidismo Congénito", height=500)
+        st.plotly_chart(fig_funnel, use_container_width=True)
+
         col1, col2 = st.columns(2)
         with col1:
-            st.write(f"**ID:** {fila['id']}")
-            st.write(f"**TSH Neonatal:** {fila['resultado_muestra_2']} mIU/L")
-            st.write(f"**ARS:** {fila['ars']}")
+            if "sexo" in filtered_df.columns:
+                sex_counts = filtered_df.groupby(["sexo", "confirmado_hipotiroidismo"]).size().unstack(fill_value=0)
+                if False not in sex_counts.columns: sex_counts[False] = 0
+                if True  not in sex_counts.columns: sex_counts[True]  = 0
+                sex_counts.columns = ["Normal", "Hipotiroidismo"]
+                fig_sex = px.bar(sex_counts.reset_index(), x="sexo",
+                                 y=["Normal","Hipotiroidismo"],
+                                 title="Distribución por Sexo", barmode="group",
+                                 color_discrete_map={"Normal":"#4682B4","Hipotiroidismo":"#FF4500"})
+                st.plotly_chart(fig_sex, use_container_width=True)
+
         with col2:
-            st.write(f"**Ciudad:** {fila['ciudad']}")
-            st.write(f"**Departamento:** {fila['departamento']}")
-            
-        # Número de teléfono del destinatario
-        telefono = st.text_input("Número de teléfono (incluir código de país):", placeholder="+573XXXXXXXXX")
-        
-        # Mensaje predeterminado
-        mensaje = (
-            f"Prueba de Alerta: El resultado de TSH neonatal de su hijo es {fila['resultado_muestra_2']}. "
-            f"Por favor, contacte a {fila['ars']} para más información."
-        )
-        
-        # Permitir editar el mensaje
-        mensaje_editado = st.text_area("Mensaje:", value=mensaje, height=100)
-        
-        # Botón para enviar SMS
-        if st.button("Enviar SMS"):
-            if telefono:
-                try:
-                    # Verificar si secrets.toml está configurado
-                    has_secrets = False
-                    try:
-                        account_sid = st.secrets["twilio"]["account_sid"]
-                        auth_token = st.secrets["twilio"]["auth_token"]
-                        from_phone_number = st.secrets["twilio"]["from_phone_number"]
-                        has_secrets = True
-                    except Exception:
-                        st.warning("No se encontró el archivo secrets.toml con las credenciales de Twilio. Se mostrará el mensaje que se enviaría.")
-                    
-                    # Registrar en log
-                    st.session_state.setdefault('sms_log', []).append({
-                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'id_caso': fila['id'],
-                        'telefono': telefono,
-                        'mensaje': mensaje_editado,
-                        'status': "Simulado (sin credenciales Twilio)"
-                    })
-                    
-                    if has_secrets:
-                        # Importar cliente de Twilio
-                        from twilio.rest import Client
-                        
-                        # Inicializar cliente de Twilio
-                        client = Client(account_sid, auth_token)
-                        
-                        # Enviar mensaje
-                        message = client.messages.create(
-                            body=mensaje_editado,
-                            from_=from_phone_number,
-                            to=telefono
-                        )
-                        #print(telefono)
-                        
-                        # Actualizar status en el log
-                        st.session_state.sms_log[-1]['status'] = "Enviado"
-                        st.session_state.sms_log[-1]['sid'] = message.sid
-                        
-                        # Mostrar confirmación
-                        st.success(f"Mensaje enviado correctamente. SID: {message.sid}")
-                    else:
-                        # Mostrar mensaje simulado
-                        st.info(f"SIMULACIÓN: Se enviaría el siguiente mensaje a {telefono}:\n\n{mensaje_editado}")
-                    
-                except Exception as e:
-                    st.error(f"Error al enviar el mensaje: {str(e)}")
-            else:
-                st.warning("Por favor, ingrese un número de teléfono válido.")
-        
-        # Sección para envío masivo de alertas
-        st.subheader("Enviar Alertas a Todos los Casos Confirmados")
-        
-        # Verificar si existen las columnas de teléfono
-        has_phone_columns = any(col in confirmed_df.columns for col in ['telefono_1', 'telefono_2'])
-        
-        if not has_phone_columns:
-            st.warning("No se encontraron las columnas 'telefono_1' o 'telefono_2' en los datos.")
+            if "prematuro" in filtered_df.columns:
+                filtered_df["prematuro"] = filtered_df["prematuro"].fillna(False)
+                prem_counts = filtered_df.groupby(["prematuro","confirmado_hipotiroidismo"]).size().unstack(fill_value=0)
+                if False not in prem_counts.columns: prem_counts[False] = 0
+                if True  not in prem_counts.columns: prem_counts[True]  = 0
+                prem_counts.columns = ["Normal","Hipotiroidismo"]
+                prem_counts = prem_counts.reset_index()
+                prem_counts["prematuro"] = prem_counts["prematuro"].map({True:"Prematuro",False:"No Prematuro"})
+                fig_prem = px.bar(prem_counts, x="prematuro", y=["Normal","Hipotiroidismo"],
+                                  title="Distribución por Prematuridad", barmode="group",
+                                  color_discrete_map={"Normal":"#4682B4","Hipotiroidismo":"#FF4500"})
+                st.plotly_chart(fig_prem, use_container_width=True)
+
+        if "ciudad" in filtered_df.columns and "confirmado_hipotiroidismo" in filtered_df.columns:
+            graficar_mapa_casos(filtered_df)
+
+    # ── Análisis TSH ──────────────────────────────────────────────────────────
+    with d_tabs[1]:
+        st.header("📊 Análisis de TSH Neonatal")
+        col1, col2 = st.columns(2)
+        with col1:
+            tsh_max_v = filtered_df["tsh_neonatal"].quantile(0.99)
+            df_tsh_v  = filtered_df[filtered_df["tsh_neonatal"] <= tsh_max_v]
+            fig_hist = px.histogram(df_tsh_v, x="tsh_neonatal", nbins=30,
+                                    color_discrete_sequence=["#3CB371"],
+                                    labels={"tsh_neonatal":"TSH Neonatal (mIU/L)"},
+                                    title="Distribución de TSH Neonatal")
+            fig_hist.add_vline(x=tsh_umbral, line_dash="dash", line_color="red",
+                               annotation_text=f"Umbral: {tsh_umbral}")
+            st.plotly_chart(fig_hist, use_container_width=True)
+        with col2:
+            df_s2 = filtered_df.dropna(subset=["tsh_neonatal","resultado_muestra_2"])
+            fig_sc = px.scatter(df_s2, x="tsh_neonatal", y="resultado_muestra_2",
+                                color="confirmado_hipotiroidismo",
+                                color_discrete_map={True:"#FF4500",False:"#4682B4"},
+                                title="TSH 1ª vs 2ª Muestra",
+                                labels={"tsh_neonatal":"TSH 1ª muestra","resultado_muestra_2":"TSH 2ª muestra"})
+            fig_sc.add_hline(y=tsh_umbral, line_dash="dash", line_color="red")
+            fig_sc.add_vline(x=tsh_umbral, line_dash="dash", line_color="red")
+            st.plotly_chart(fig_sc, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if "sexo" in filtered_df.columns:
+                fig_box = px.box(filtered_df, x="sexo", y="tsh_neonatal", color="sexo",
+                                 points="outliers", title="TSH por Sexo",
+                                 labels={"tsh_neonatal":"TSH (mIU/L)"})
+                fig_box.add_hline(y=tsh_umbral, line_dash="dash", line_color="red",
+                                  annotation_text=f"Umbral: {tsh_umbral}")
+                fig_box.update_yaxes(range=[0, 40])
+                st.plotly_chart(fig_box, use_container_width=True)
+        with col2:
+            if "prematuro" in filtered_df.columns:
+                ymax = max(30, filtered_df["tsh_neonatal"].quantile(0.95)) if not filtered_df.empty else 30
+                fig_bp = px.box(filtered_df, x="prematuro", y="tsh_neonatal", color="prematuro",
+                                points="outliers", title="TSH por Prematuridad",
+                                labels={"tsh_neonatal":"TSH (mIU/L)"})
+                fig_bp.add_hline(y=tsh_umbral, line_dash="dash", line_color="red",
+                                 annotation_text=f"Umbral: {tsh_umbral}")
+                fig_bp.update_yaxes(range=[0, ymax])
+                st.plotly_chart(fig_bp, use_container_width=True)
+
+    # ── Análisis Temporal ─────────────────────────────────────────────────────
+    with d_tabs[2]:
+        st.header("⏱️ Análisis Temporal")
+        if "fecha_nacimiento" in filtered_df.columns:
+            df_t = filtered_df.copy()
+            df_t["año_mes"] = df_t["fecha_nacimiento"].dt.to_period("M")
+            temp_df = df_t.groupby("año_mes").agg(
+                total_casos=("tsh_neonatal","count"),
+                casos_sospechosos=("sospecha_hipotiroidismo","sum"),
+                casos_confirmados=("confirmado_hipotiroidismo","sum"),
+                tsh_promedio=("tsh_neonatal","mean"),
+            ).reset_index()
+            temp_df["año_mes"] = temp_df["año_mes"].dt.to_timestamp()
+            temp_df["tasa_confirmacion"] = temp_df["casos_confirmados"] / temp_df["casos_sospechosos"].replace(0, np.nan)
+
+            fig_temp = go.Figure()
+            fig_temp.add_trace(go.Scatter(x=temp_df["año_mes"], y=temp_df["casos_sospechosos"],
+                                          mode="lines+markers", name="Sospechosos",
+                                          line=dict(color="#FFA500", width=2)))
+            fig_temp.add_trace(go.Scatter(x=temp_df["año_mes"], y=temp_df["casos_confirmados"],
+                                          mode="lines+markers", name="Confirmados",
+                                          line=dict(color="#FF4500", width=2)))
+            fig_temp.add_trace(go.Scatter(x=temp_df["año_mes"], y=temp_df["tasa_confirmacion"],
+                                          mode="lines", name="Tasa Confirmación",
+                                          line=dict(color="#4682B4", dash="dot"), yaxis="y2"))
+            fig_temp.update_layout(
+                title="Evolución Temporal",
+                yaxis=dict(title="Número de Casos", tickfont=dict(color="#FF4500")),
+                yaxis2=dict(title="Tasa de Confirmación", overlaying="y", side="right",
+                            range=[0,1], tickfont=dict(color="#4682B4")),
+                legend=dict(orientation="h", y=1.02, x=0.5, xanchor="center"),
+            )
+            st.plotly_chart(fig_temp, use_container_width=True)
+
+            df_t["mes"] = df_t["fecha_nacimiento"].dt.month
+            seas = df_t.groupby("mes").agg(
+                casos_sospechosos=("sospecha_hipotiroidismo","sum"),
+                casos_confirmados=("confirmado_hipotiroidismo","sum"),
+                tsh_promedio=("tsh_neonatal","mean"),
+            ).reset_index()
+            fig_seas = px.line(seas, x="mes",
+                               y=["casos_sospechosos","casos_confirmados","tsh_promedio"],
+                               title="Estacionalidad por Mes",
+                               color_discrete_map={"casos_sospechosos":"#FFA500",
+                                                   "casos_confirmados":"#FF4500",
+                                                   "tsh_promedio":"#4682B4"})
+            fig_seas.update_layout(xaxis=dict(
+                tickvals=list(range(1,13)),
+                ticktext=["Ene","Feb","Mar","Abr","May","Jun",
+                          "Jul","Ago","Sep","Oct","Nov","Dic"]))
+            st.plotly_chart(fig_seas, use_container_width=True)
+
+            if "dias_pasados" in filtered_df.columns:
+                st.subheader("Tiempos de Procesamiento")
+                c1, c2 = st.columns(2)
+                with c1:
+                    fig_d = px.histogram(filtered_df, x="dias_pasados", nbins=20,
+                                         title="Días hasta el Resultado",
+                                         color_discrete_sequence=["#4682B4"])
+                    st.plotly_chart(fig_d, use_container_width=True)
+                with c2:
+                    t_df = filtered_df.groupby("sospecha_hipotiroidismo")["dias_pasados"].mean().reset_index()
+                    t_df["Estado"] = t_df["sospecha_hipotiroidismo"].map(
+                        {True:f"Sospechoso (TSH ≥ {TSH_CORTE})", False:f"Normal (TSH < {TSH_CORTE})"})
+                    fig_t = px.bar(t_df, x="Estado", y="dias_pasados",
+                                   title="Tiempo Promedio por Estado",
+                                   color="Estado",
+                                   color_discrete_map={
+                                       f"Sospechoso (TSH ≥ {TSH_CORTE})":"#FF4500",
+                                       f"Normal (TSH < {TSH_CORTE})":"#4682B4"})
+                    st.plotly_chart(fig_t, use_container_width=True)
+
+    # ── Factores de Riesgo ────────────────────────────────────────────────────
+    with d_tabs[3]:
+        st.header("🔬 Análisis de Factores de Riesgo")
+        if "peso" in filtered_df.columns:
+            df_r = filtered_df.copy()
+            df_r["peso_kg"] = pd.to_numeric(df_r["peso"], errors="coerce") / 1000
+            fig_pr = px.scatter(df_r, x="peso_kg", y="tsh_neonatal",
+                                color="confirmado_hipotiroidismo",
+                                color_discrete_map={True:"#FF4500",False:"#4682B4"},
+                                title="Peso al Nacer vs TSH",
+                                labels={"peso_kg":"Peso (kg)","tsh_neonatal":"TSH (mIU/L)"},
+                                trendline="ols", opacity=0.7)
+            fig_pr.add_hline(y=tsh_umbral, line_dash="dash", line_color="red",
+                             annotation_text=f"Umbral {tsh_umbral}")
+            st.plotly_chart(fig_pr, use_container_width=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if "tipo_muestra" in filtered_df.columns and "id" in filtered_df.columns:
+                tm_df = filtered_df.groupby("tipo_muestra").agg(
+                    total=("id","count"), confirmados=("confirmado_hipotiroidismo","sum")).reset_index()
+                tm_df["incidencia"] = (tm_df["confirmados"] / tm_df["total"]) * 100
+                fig_tm = px.bar(tm_df, x="tipo_muestra", y="incidencia",
+                                title="Incidencia por Tipo de Muestra",
+                                color="incidencia", color_continuous_scale="Reds")
+                st.plotly_chart(fig_tm, use_container_width=True)
+        with col2:
+            if "sexo" in filtered_df.columns and "id" in filtered_df.columns:
+                sx_df = filtered_df.groupby("sexo").agg(
+                    total=("id","count"), confirmados=("confirmado_hipotiroidismo","sum")).reset_index()
+                sx_df["incidencia"] = (sx_df["confirmados"] / sx_df["total"]) * 100
+                fig_sx = px.bar(sx_df, x="sexo", y="incidencia",
+                                title="Incidencia por Sexo",
+                                color="incidencia", color_continuous_scale="Reds")
+                st.plotly_chart(fig_sx, use_container_width=True)
+
+        if "peso" in filtered_df.columns and "prematuro" in filtered_df.columns:
+            bins = [0, 1500, 2500, 4000, 10000]
+            labels_b = ["Muy bajo (<1.5kg)","Bajo (1.5-2.5kg)","Normal (2.5-4kg)","Alto (>4kg)"]
+            df_r2 = filtered_df.copy()
+            df_r2["peso_num"] = pd.to_numeric(df_r2["peso"], errors="coerce")
+            df_r2["rango_peso"] = pd.cut(df_r2["peso_num"], bins=bins, labels=labels_b)
+            pp_df = df_r2.groupby(["prematuro","rango_peso"]).agg(
+                total=("tsh_neonatal","count"),
+                confirmados=("confirmado_hipotiroidismo","sum")).reset_index()
+            pp_df["incidencia"] = (pp_df["confirmados"] / pp_df["total"]) * 100
+            pp_df["prematuro_label"] = pp_df["prematuro"].map({True:"Prematuro",False:"No Prematuro"})
+            fig_pp = px.bar(pp_df, x="rango_peso", y="incidencia",
+                            color="prematuro_label", barmode="group",
+                            title="Incidencia por Peso y Prematuridad",
+                            color_discrete_map={"Prematuro":"#FF4500","No Prematuro":"#4682B4"})
+            st.plotly_chart(fig_pp, use_container_width=True)
+
+        if all(c in filtered_df.columns for c in ["peso","tsh_neonatal","resultado_muestra_2","dias_pasados","sexo"]):
+            df_c = filtered_df.copy()
+            df_c["sexo_num"] = df_c["sexo"].map({"MASCULINO":0,"FEMENINO":1})
+            corr = df_c[["peso","tsh_neonatal","resultado_muestra_2","dias_pasados","sexo_num"]].corr()
+            fig_corr = px.imshow(corr, text_auto=True, aspect="auto",
+                                 color_continuous_scale="RdBu_r", title="Matriz de Correlación")
+            st.plotly_chart(fig_corr, use_container_width=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 3 — CASOS CONFIRMADOS + ALERTAS SMS
+# ═════════════════════════════════════════════════════════════════════════════
+
+with tab_alertas:
+    st.header("🚨 Casos Confirmados y Alertas SMS")
+
+    # Cargar dataset para esta tab
+    df_a = load_data()
+
+    if df_a.empty:
+        st.warning("Sin datos disponibles. Verifica el archivo CSV principal.")
+    else:
+        confirmed_df = df_a[df_a["confirmado_hipotiroidismo"] == True].copy()
+
+        if confirmed_df.empty:
+            st.info("No hay casos confirmados en el dataset actual.")
         else:
-            # Contar cuántos casos tienen teléfono disponible
-            phone_count = confirmed_df.apply(lambda row: pd.notna(row.get('telefono_1', None)) or pd.notna(row.get('telefono_2', None)), axis=1).sum()
-            
-            st.write(f"Se encontraron {phone_count} de {len(confirmed_df)} casos con número de teléfono disponible.")
-            
-            # Plantilla de mensaje para envío masivo
-            mensaje_masivo_template = st.text_area(
-                "Plantilla de mensaje (use {tsh} y {ars} como marcadores):",
-                value="Prueba de Alerta: El resultado de TSH neonatal de su hijo es {tsh}. Por favor, contacte a {ars} para más información.",
-                height=100,
-                key="mensaje_masivo"
+            # ── Métricas rápidas ──────────────────────────────────────────
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Total Confirmados", confirmed_df.shape[0])
+            with c2: st.metric("TSH Promedio", f"{confirmed_df['tsh_neonatal'].mean():.1f} mIU/L")
+            with c3:
+                if "dias_pasados" in confirmed_df.columns:
+                    st.metric("Días prom. diagnóstico", f"{confirmed_df['dias_pasados'].mean():.1f}")
+
+            st.markdown("---")
+
+            # ── SMS Individual ────────────────────────────────────────────
+            st.subheader("📱 Envío Individual")
+            col_sel, col_det = st.columns([1, 2])
+
+            with col_sel:
+                id_col = "id" if "id" in confirmed_df.columns else confirmed_df.columns[0]
+                ciudad_col = "ciudad" if "ciudad" in confirmed_df.columns else ""
+                options = confirmed_df.index.tolist()
+                fmt = lambda x: (f"ID: {confirmed_df.loc[x, id_col]} — "
+                                 f"{confirmed_df.loc[x, ciudad_col] if ciudad_col else x}")
+                selected = st.selectbox("Seleccionar caso:", options=options, format_func=fmt)
+
+            fila = confirmed_df.loc[selected]
+            with col_det:
+                d1, d2 = st.columns(2)
+                with d1:
+                    st.write(f"**ID:** {fila.get('id','—')}")
+                    st.write(f"**TSH 1ª muestra:** {fila.get('tsh_neonatal','—')} mIU/L")
+                    st.write(f"**TSH 2ª muestra:** {fila.get('resultado_muestra_2','—')} mIU/L")
+                with d2:
+                    st.write(f"**Ciudad:** {fila.get('ciudad','—')}")
+                    st.write(f"**Departamento:** {fila.get('departamento','—')}")
+                    st.write(f"**ARS:** {fila.get('ars','—')}")
+
+            tel_ind = st.text_input("Teléfono destinatario:", placeholder="+573XXXXXXXXX", key="tel_ind")
+            tel_irs_ind = st.text_input("Teléfono IRS:", placeholder="+573XXXXXXXXX", key="tel_irs_ind")
+
+            msg_ind = st.text_area(
+                "Mensaje al paciente/acudiente:",
+                value=(f"Alerta: El resultado del tamizaje de hipotiroidismo de su hijo(a) "
+                       f"es POSITIVO (TSH: {fila.get('resultado_muestra_2','—')} mIU/L). "
+                       f"Contacte a {fila.get('ars','su EPS')} para iniciar tratamiento urgente."),
+                height=90, key="msg_ind",
             )
-            
-            # Opción para enviar un mensaje de prueba
-            test_mode = st.checkbox("Modo de prueba (solo registrar mensajes sin enviarlos)", value=True)
-            
-            # Botón para enviar a todos
-            if st.button("Enviar SMS a Todos los Casos"):
-                # Configuración de Twilio
-                try:
-                    # Verificar si secrets.toml está configurado
-                    has_secrets = False
-                    try:
-                        account_sid = st.secrets["twilio"]["account_sid"]
-                        auth_token = st.secrets["twilio"]["auth_token"]
-                        from_phone_number = st.secrets["twilio"]["from_phone_number"]
-                        has_secrets = True
-                    except Exception:
-                        st.warning("No se encontró el archivo secrets.toml con las credenciales de Twilio. Se usará el modo de simulación.")
-                        test_mode = True
-                    
-                    # Importar cliente de Twilio
-                    if has_secrets and not test_mode:
-                        from twilio.rest import Client
-                        client = Client(account_sid, auth_token)
-                    
-                    # Crear barra de progreso
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    # Contador de mensajes enviados y fallidos
-                    sent_count = 0
-                    failed_count = 0
-                    
-                    # Procesar cada caso
-                    for i, (idx, row) in enumerate(confirmed_df.iterrows()):
-                        # Actualizar barra de progreso
-                        progress = (i + 1) / len(confirmed_df)
-                        progress_bar.progress(progress)
-                        status_text.text(f"Procesando {i+1} de {len(confirmed_df)} casos...")
-                        
-                        # Obtener teléfono (priorizar telefono_1)
-                        telefono = None
-                        if 'telefono_1' in row and pd.notna(row['telefono_1']):
-                            telefono = row['telefono_1']
-                        elif 'telefono_2' in row and pd.notna(row['telefono_2']):
-                            telefono = row['telefono_2']
-                        
-                        # Solo procesar si hay un teléfono disponible
-                        if telefono:
-                            # Formatear teléfono si es necesario (asegurar formato internacional)
-                            if not telefono.startswith('+'):
-                                telefono = '+57' + telefono
-                            
-                            # Personalizar mensaje con los datos del paciente
-                            tsh = str(row['resultado_muestra_2'])
-                            ars = str(row.get('ars', 'su servicio de salud'))
-                            mensaje_personalizado = mensaje_masivo_template.replace('{tsh}', tsh).replace('{ars}', ars)
-                            
-                            try:
-                                # En modo real, enviar mensaje
-                                if not test_mode:
-                                    message = client.messages.create(
-                                        body=mensaje_personalizado,
-                                        from_=twilio_number,
-                                        to=telefono
-                                    )
-                                    message_sid = message.sid
-                                    status = "Enviado"
-                                    #print(telefono)
-                                else:
-                                    # En modo de prueba, simular éxito
-                                    message_sid = f"TEST-{i}"
-                                    status = "Prueba"
-                                    #print(telefono)
-                                
-                                # Registrar mensaje en el historial
-                                st.session_state.setdefault('sms_log', []).append({
-                                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    'id_caso': row.get('id', idx),
-                                    'telefono': telefono,
-                                    'mensaje': mensaje_personalizado,
-                                    'status': status,
-                                    'sid': message_sid
-                                })
-                                
-                                sent_count += 1
-                                
-                            except Exception as e:
-                                # Registrar error
-                                st.session_state.setdefault('sms_log', []).append({
-                                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    'id_caso': row.get('id', idx),
-                                    'telefono': telefono,
-                                    'mensaje': mensaje_personalizado,
-                                    'status': f"Error: {str(e)}"
-                                })
-                                
-                                failed_count += 1
-                    
-                    # Mostrar resumen
-                    if test_mode:
-                        st.success(f"Modo de prueba: Se procesaron {sent_count} mensajes exitosamente (simulados) y {failed_count} fallaron.")
+            msg_irs_ind = st.text_area(
+                "Mensaje a la IRS:",
+                value=(f"Caso confirmado: ID {fila.get('id','—')}, "
+                       f"Ciudad {fila.get('ciudad','—')}, "
+                       f"TSH: {fila.get('resultado_muestra_2','—')} mIU/L. "
+                       f"ARS: {fila.get('ars','—')}. Requiere seguimiento urgente."),
+                height=90, key="msg_irs_ind",
+            )
+            test_ind = st.checkbox("🧪 Modo prueba", value=True, key="test_ind")
+
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                if st.button("📤 Enviar SMS al Paciente", key="btn_pac"):
+                    if tel_ind:
+                        ok, status = enviar_sms(tel_ind, msg_ind, test_ind)
+                        (st.success if ok else st.error)(status)
+                        st.session_state.setdefault("sms_log", []).append({
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "id_caso": fila.get("id","—"), "destino":"Paciente",
+                            "telefono": tel_ind, "status": status,
+                        })
                     else:
-                        st.success(f"Se enviaron {sent_count} mensajes exitosamente y {failed_count} fallaron.")
-                    
-                except Exception as e:
-                    st.error(f"Error al configurar Twilio: {str(e)}")
-        
-        # Historial de mensajes enviados
-        if 'sms_log' in st.session_state and st.session_state.sms_log:
-            with st.expander("Historial de mensajes enviados"):
-                log_df = pd.DataFrame(st.session_state.sms_log)
-                st.dataframe(log_df)
-        
-        # Línea divisoria
+                        st.warning("Ingresa un teléfono.")
+
+            with c_btn2:
+                if st.button("🏥 Enviar SMS a la IRS", key="btn_irs"):
+                    if tel_irs_ind:
+                        ok, status = enviar_sms(tel_irs_ind, msg_irs_ind, test_ind)
+                        (st.success if ok else st.error)(status)
+                        st.session_state.setdefault("sms_log", []).append({
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "id_caso": fila.get("id","—"), "destino":"IRS",
+                            "telefono": tel_irs_ind, "status": status,
+                        })
+                    else:
+                        st.warning("Ingresa el teléfono de la IRS.")
+
+            st.markdown("---")
+
+            # ── SMS Masivo ────────────────────────────────────────────────
+            st.subheader("📡 Envío Masivo a Todos los Confirmados")
+
+            has_phones = any(c in confirmed_df.columns for c in ["telefono_1","telefono_2","tel1","tel2"])
+            if not has_phones:
+                st.warning("No se encontraron columnas de teléfono en el dataset (telefono_1 / telefono_2).")
+            else:
+                phone_col = next((c for c in ["telefono_1","telefono_2","tel1","tel2"]
+                                  if c in confirmed_df.columns), None)
+                n_con_tel = confirmed_df[phone_col].notna().sum() if phone_col else 0
+                st.info(f"{n_con_tel} de {len(confirmed_df)} casos tienen teléfono disponible.")
+
+                tmpl_pac = st.text_area(
+                    "Plantilla mensaje paciente (use {tsh} y {ars}):",
+                    value="Alerta: El TSH neonatal de su hijo(a) es {tsh} mIU/L. Contacte a {ars} urgente.",
+                    height=80, key="tmpl_pac",
+                )
+                tmpl_irs_col = st.text_input("Teléfono IRS (único para todos):", key="irs_mass")
+                tmpl_irs_msg = st.text_area(
+                    "Plantilla mensaje IRS:",
+                    value="Nuevo caso confirmado: TSH {tsh} mIU/L — ARS {ars}. Requiere seguimiento.",
+                    height=80, key="tmpl_irs_msg",
+                )
+                test_mass = st.checkbox("🧪 Modo prueba masivo", value=True, key="test_mass")
+
+                if st.button("🚀 Enviar a Todos los Casos Confirmados", key="btn_mass"):
+                    log_mass = []
+                    bar = st.progress(0)
+                    status_txt = st.empty()
+                    sent, failed = 0, 0
+
+                    rows_list = list(confirmed_df.iterrows())
+                    for i, (idx, row) in enumerate(rows_list):
+                        bar.progress((i + 1) / len(rows_list))
+                        status_txt.text(f"Procesando {i+1}/{len(rows_list)}…")
+
+                        tel = str(row.get(phone_col, "")).strip() if phone_col else ""
+                        tsh_v = str(row.get("resultado_muestra_2", ""))
+                        ars_v = str(row.get("ars", "su EPS"))
+
+                        if tel and tel not in ("nan","0",""):
+                            msg_p = tmpl_pac.replace("{tsh}", tsh_v).replace("{ars}", ars_v)
+                            ok, s = enviar_sms(tel, msg_p, test_mass)
+                            log_mass.append({"id": row.get("id","—"), "destino":"Paciente",
+                                             "telefono": tel, "status": s})
+                            sent += 1 if ok else 0
+                            failed += 0 if ok else 1
+
+                        if tmpl_irs_col:
+                            msg_i = tmpl_irs_msg.replace("{tsh}", tsh_v).replace("{ars}", ars_v)
+                            ok, s = enviar_sms(tmpl_irs_col, msg_i, test_mass)
+                            log_mass.append({"id": row.get("id","—"), "destino":"IRS",
+                                             "telefono": tmpl_irs_col, "status": s})
+
+                    bar.progress(1.0)
+                    status_txt.empty()
+                    st.success(f"✅ Completado: {sent} enviados, {failed} fallidos.")
+                    st.session_state.setdefault("sms_log", []).extend(log_mass)
+
+            st.markdown("---")
+
+            # ── Tabla casos + descarga ────────────────────────────────────
+            st.subheader("📋 Detalle de Casos Confirmados")
+            cols_show = [c for c in ["id","ciudad","departamento","sexo","fecha_nacimiento",
+                                      "peso","prematuro","tsh_neonatal","resultado_muestra_2",
+                                      "dias_pasados"] if c in confirmed_df.columns]
+            st.dataframe(confirmed_df[cols_show], use_container_width=True, height=350)
+
+            csv_bytes = confirmed_df[cols_show].to_csv(index=False).encode("utf-8")
+            st.download_button("⬇  Descargar casos confirmados CSV",
+                               csv_bytes, "casos_confirmados.csv", "text/csv")
+
+            # TSH distribución
+            fig_tsh_c = px.histogram(confirmed_df, x="tsh_neonatal", nbins=20,
+                                     title="Distribución TSH en Casos Confirmados",
+                                     color_discrete_sequence=["#FF4500"])
+            st.plotly_chart(fig_tsh_c, use_container_width=True)
+
+    # ── Log global de SMS ─────────────────────────────────────────────────────
+    if st.session_state.get("sms_log"):
         st.markdown("---")
-        
-        # Estadísticas descriptivas de los casos confirmados
-        st.subheader("Estadísticas Descriptivas de Casos Confirmados")
-       
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Casos Confirmados", f"{confirmed_df.shape[0]}")
-        with col2:
-            st.metric("TSH Promedio", f"{confirmed_df['tsh_neonatal'].mean():.1f} mIU/L")
-        with col3:
-            st.metric("Edad Promedio al Diagnóstico", f"{confirmed_df['dias_pasados'].mean():.1f} días")
-       
-        # Distribución de TSH en casos confirmados
-        st.subheader("Distribución de TSH en Casos Confirmados")
-       
-        fig_confirmed_tsh = px.histogram(
-            confirmed_df,
-            x='tsh_neonatal',
-            nbins=20,
-            title='Distribución de TSH en Casos Confirmados',
-            labels={'tsh_neonatal': 'TSH Neonatal (mIU/L)'},
-            color_discrete_sequence=['#FF4500']
-        )
-       
-        st.plotly_chart(fig_confirmed_tsh, use_container_width=True)
-       
-        # Distribución geográfica de casos
-        st.subheader("Distribución Geográfica de Casos Confirmados")
-       
-        # Tabla de casos por departamento
-        geo_counts = confirmed_df.groupby('departamento').size().reset_index(name='casos')
-        geo_counts = geo_counts.sort_values('casos', ascending=False)
-       
-        col1, col2 = st.columns([2, 1])
-       
-        with col1:
-            fig_geo = px.bar(
-                geo_counts,
-                x='departamento',
-                y='casos',
-                title='Casos Confirmados por Departamento',
-                labels={'casos': 'Número de Casos', 'departamento': 'Departamento'},
-                color='casos',
-                color_continuous_scale='Reds'
-            )
-           
-            st.plotly_chart(fig_geo, use_container_width=True)
-       
-        with col2:
-            st.dataframe(geo_counts, width=300, height=400)
-       
-        # Tabla de casos confirmados
-        st.subheader("Detalle de Casos Confirmados")
-       
-        # Seleccionar columnas relevantes para mostrar
-        columns_to_show = [
-            'id', 'ciudad', 'departamento', 'sexo', 'fecha_nacimiento',
-            'peso', 'prematuro', 'tsh_neonatal', 'resultado_muestra_2', 'dias_pasados'
-        ]
-       
-        confirmed_table = confirmed_df[columns_to_show].copy()
-        confirmed_table['peso_kg'] = confirmed_table['peso'] / 1000
-        confirmed_table.rename(columns={'peso_kg': 'Peso (kg)'}, inplace=True)
-       
-        st.dataframe(confirmed_table, height=400)
-       
-        # Opción para descargar los datos de casos confirmados
-        csv = confirmed_table.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "Descargar Datos de Casos Confirmados",
-            csv,
-            "casos_confirmados.csv",
-            "text/csv",
-            key='download-csv'
-        )
+        with st.expander("📋  Historial completo de SMS"):
+            log_df = pd.DataFrame(st.session_state["sms_log"])
+            st.dataframe(log_df, use_container_width=True)
+            st.download_button("⬇ Exportar log", log_df.to_csv(index=False).encode(),
+                               "sms_log.csv", "text/csv")
 
-# Información del proyecto en el sidebar
+# ── Sidebar info ──────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
-st.sidebar.info(
-    """
-    **Proyecto de Análisis de Hipotiroidismo Congénito**
-    
-    Este dashboard permite analizar datos de tamizaje neonatal 
-    para la detección temprana de hipotiroidismo congénito.
-    
-    Desarrollado por: Luis Carlos Pallares Ascanio
-    """
-)
+st.sidebar.info("""
+**Hipotiroidismo Congénito — Sistema de Tamizaje**
 
-# Footer
-st.markdown("---")
-st.markdown(
-    """
-### Notas:
-- **Sospecha Matrizde hipotiroidismo**: TSH ≥ 15 mIU/L en la primera muestra.
-- **Confirmación de hipotiroidismo**: TSH ≥ 15 mIU/L en la primera y segunda muestra.
+📝 Ingresa datos desde la tarjeta física
+📊 Analiza resultados y tendencias
+🚨 Gestiona alertas a pacientes e IRS
 
-    <div style="text-align: center">
-        <p>Dashboard de Hipotiroidismo Congénito v1.0 | © 2025</p>
-    </div>
-    """, 
-    unsafe_allow_html=True
-)
+Desarrollado por: Luis Carlos Pallares Ascanio
+""")
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"""
+**Notas clínicas:**
+- Sospecha: TSH ≥ {TSH_CORTE} mIU/L en 1ª muestra
+- Confirmación: TSH ≥ {TSH_CORTE} mIU/L en 2ª muestra
+""")
