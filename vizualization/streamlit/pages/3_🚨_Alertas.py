@@ -107,7 +107,7 @@ msg_ind = st.text_area("Mensaje al paciente:",
 msg_irs_ind = st.text_area("Mensaje a la IRS:",
     value=(f"Caso confirmado — ID {fila.get('id','—')}, "
            f"Ficha {fila.get('ficha_id','—')}, "
-           f"Ciudad {fila.get('ciudad','—')}, "
+           f"Municipio {fila.get('nombre_municipio', fila.get('ciudad','—'))}, "
            f"TSH: {tsh2_fila} mIU/L. ARS: {ars_fila}. Requiere seguimiento urgente."),
     height=90, key="msg_irs_ind")
 

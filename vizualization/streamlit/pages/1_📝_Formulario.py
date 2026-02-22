@@ -4,8 +4,9 @@ import pandas as pd
 from datetime import date, datetime
 
 from utils.constantes import (
-    CSS, TSH_CORTE, DEPARTAMENTOS,
+    CSS, TSH_CORTE,
     TIPOS_DOC, TIPOS_MUESTRA, TIPOS_VINC, DESTINOS, SEXOS,
+    cargar_municipios, get_departamentos, get_municipios,
 )
 from utils.validaciones import val_tsh, val_peso
 from utils.csv_helpers import (
@@ -17,6 +18,17 @@ st.set_page_config(page_title="Formulario", page_icon="📝", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.title("📝 Ingreso de Datos")
+
+# ── Cargar municipios una sola vez ────────────────────────────────────────────
+@st.cache_data
+def _municipios():
+    return cargar_municipios()
+
+df_mun = _municipios()
+deptos = get_departamentos(df_mun)  # [{cod, nombre}, ...]
+
+if df_mun.empty:
+    st.warning("⚠️ No se encontró `municipios.csv`. Verifica que esté en la raíz del proyecto.")
 
 modo = st.radio(
     "modo",
@@ -47,8 +59,33 @@ if modo == "📋  Registrar nueva tarjeta":
         tipo_doc     = st.selectbox("★ Tipo de Documento", TIPOS_DOC, key="n_tdoc")
     with c3:
         num_doc      = st.text_input("★ Número de Documento", key="n_ndoc")
-        ciudad       = st.text_input("★ Ciudad", placeholder="Bogotá", key="n_ciudad")
-        departamento = st.selectbox("★ Departamento", DEPARTAMENTOS, key="n_depto")
+
+        # ── Departamento (cascada) ──────────────────────────────────────────
+        depto_nombres = ["Seleccionar..."] + [d["nombre"] for d in deptos]
+        depto_sel_nombre = st.selectbox("★ Departamento", depto_nombres, key="n_depto")
+
+        # Resolver código del departamento seleccionado
+        cod_depto_sel = ""
+        if depto_sel_nombre != "Seleccionar...":
+            match = [d for d in deptos if d["nombre"] == depto_sel_nombre]
+            cod_depto_sel = match[0]["cod"] if match else ""
+
+        # ── Municipio (filtrado por departamento) ───────────────────────────
+        municipios_depto = get_municipios(df_mun, cod_depto_sel)
+        mun_nombres = ["Seleccionar..."] + [m["nombre"] for m in municipios_depto]
+        mun_sel_nombre = st.selectbox(
+            "★ Municipio",
+            mun_nombres,
+            key="n_municipio",
+            disabled=(not cod_depto_sel),
+            help="Primero selecciona un departamento" if not cod_depto_sel else "",
+        )
+
+        # Resolver código del municipio seleccionado
+        cod_municipio_sel = ""
+        if mun_sel_nombre != "Seleccionar...":
+            match = [m for m in municipios_depto if m["nombre"] == mun_sel_nombre]
+            cod_municipio_sel = match[0]["cod"] if match else ""
 
     c4, c5 = st.columns(2)
     with c4:
@@ -107,12 +144,17 @@ if modo == "📋  Registrar nueva tarjeta":
                 errors.append(f"**{label}** es obligatorio")
 
         for val, label in [
-            (tipo_doc, "Tipo de Documento"), (departamento, "Departamento"),
+            (tipo_doc, "Tipo de Documento"),
             (sexo, "Sexo"), (tipo_vinc, "Tipo de Vinculación"),
             (tipo_muestra1, "Tipo de Muestra"), (destino, "Destino muestra"),
         ]:
             if not val or val == "Seleccionar...":
                 errors.append(f"**{label}** es obligatorio")
+
+        if depto_sel_nombre == "Seleccionar...":
+            errors.append("**Departamento** es obligatorio")
+        if mun_sel_nombre == "Seleccionar...":
+            errors.append("**Municipio** es obligatorio")
 
         if fecha_ingreso is None:
             errors.append("**Fecha de Ingreso** es obligatoria")
@@ -149,8 +191,10 @@ if modo == "📋  Registrar nueva tarjeta":
                 "historia_clinica":      historia.strip(),
                 "tipo_documento":        tipo_doc,
                 "numero_documento":      num_doc.strip(),
-                "ciudad":                ciudad.strip(),
-                "departamento":          departamento,
+                "cod_municipio":          cod_municipio_sel,
+                "nombre_municipio":       mun_sel_nombre,
+                "cod_departamento":       cod_depto_sel,
+                "nombre_departamento":    depto_sel_nombre,
                 "telefono_1":            tel1.strip() or "0",
                 "telefono_2":            tel2.strip() or "0",
                 "direccion":             direccion.strip(),
@@ -209,10 +253,13 @@ else:
         ci4.metric("Institución",     reg.get("institucion", "—"))
 
         ci5, ci6, ci7, ci8 = st.columns(4)
-        ci5.metric("Ciudad",      reg.get("ciudad", "—"))
-        ci6.metric("ARS",         reg.get("ars", "—"))
-        ci7.metric("Tipo muestra",reg.get("tipo_muestra", "—"))
-        ci8.metric("Fecha toma",  reg.get("fecha_toma_muestra", "—"))
+        ci5.metric("Municipio",   reg.get("nombre_municipio", reg.get("ciudad", "—")))
+        ci6.metric("Departamento",reg.get("nombre_departamento", reg.get("departamento", "—")))
+        ci7.metric("ARS",         reg.get("ars", "—"))
+        ci8.metric("Tipo muestra",reg.get("tipo_muestra", "—"))
+
+        ci9, ci10 = st.columns(2)
+        ci9.metric("Fecha toma",  reg.get("fecha_toma_muestra", "—"))
 
         tsh1_actual  = reg.get("tsh_neonatal", "").strip()
         tsh2_actual  = reg.get("resultado_muestra_2", "").strip()
@@ -334,7 +381,8 @@ else:
                     st.text_area("Mensaje IRS",
                         value=f"Caso confirmado — Ficha {reg.get('ficha_id','')}: "
                               f"{reg.get('apellido_1','')} {reg.get('apellido_2','')}, "
-                              f"Ciudad: {reg.get('ciudad','')}, TSH: {tsh2_str} µIU/mL. "
+                              f"Municipio: {reg.get('nombre_municipio', reg.get('ciudad',''))}, "
+                              f"TSH: {tsh2_str} µIU/mL. "
                               f"ARS: {ars_reg}. Requiere seguimiento urgente.",
                         height=90, key="r_msg_irs")
             st.checkbox("🧪 Modo de prueba (no envía realmente)", value=True, key="r_sms_test")

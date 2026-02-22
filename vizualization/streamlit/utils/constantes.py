@@ -12,7 +12,8 @@ PESO_MAX  = 8000
 FIELDNAMES = [
     "id", "ficha_id", "fecha_ingreso", "institucion", "ars",
     "historia_clinica", "tipo_documento", "numero_documento",
-    "ciudad", "departamento", "telefono_1", "telefono_2", "direccion",
+    "cod_municipio", "nombre_municipio", "cod_departamento", "nombre_departamento",
+    "telefono_1", "telefono_2", "direccion",
     "apellido_1", "apellido_2", "nombre_hijo",
     "fecha_nacimiento", "peso", "sexo", "prematuro", "transfundido",
     "informacion_completa", "muestra_adecuada", "destino_muestra",
@@ -23,15 +24,62 @@ FIELDNAMES = [
     "resultado_rechazada", "fecha_resultado_rechazada",
 ]
 
-DEPARTAMENTOS = [
-    "Seleccionar...", "Amazonas", "Antioquia", "Arauca", "Atlántico",
-    "Bolívar", "Boyacá", "Caldas", "Caquetá", "Casanare", "Cauca",
-    "Cesar", "Chocó", "Córdoba", "Cundinamarca", "Guainía", "Guaviare",
-    "Huila", "La Guajira", "Magdalena", "Meta", "Nariño",
-    "Norte de Santander", "Putumayo", "Quindío", "Risaralda",
-    "San Andrés", "Santander", "Sucre", "Tolima", "Valle del Cauca",
-    "Vaupés", "Vichada",
-]
+import pandas as _pd
+
+def cargar_municipios(path: str = "../../data/municipios.csv") -> _pd.DataFrame:
+    """
+    Carga el CSV de municipios con columnas normalizadas.
+    Retorna DataFrame con: cod_depto, nombre_depto, cod_municipio, nombre_municipio
+    """
+    try:
+        df = _pd.read_csv(path, dtype=str, sep=None, engine="python")
+        df.columns = (
+            df.columns.str.strip()
+                      .str.lower()
+                      .str.replace(" ", "_")
+                      .str.replace(":", "")
+                      .str.normalize("NFKD")
+                      .str.encode("ascii", errors="ignore")
+                      .str.decode("ascii")
+        )
+        # Mapear nombres de columnas flexiblemente
+        rename = {}
+        for c in df.columns:
+            if "codigo" in c and "departamento" in c:  rename[c] = "cod_depto"
+            elif "nombre" in c and "departamento" in c: rename[c] = "nombre_depto"
+            elif "codigo" in c and "municipio" in c:    rename[c] = "cod_municipio"
+            elif "nombre" in c and "municipio" in c:    rename[c] = "nombre_municipio"
+        df = df.rename(columns=rename)
+        # Limpiar y normalizar
+        for col in ["cod_depto","nombre_depto","cod_municipio","nombre_municipio"]:
+            if col in df.columns:
+                df[col] = df[col].str.strip()
+        return df[["cod_depto","nombre_depto","cod_municipio","nombre_municipio"]].dropna()
+    except Exception:
+        return _pd.DataFrame(columns=["cod_depto","nombre_depto","cod_municipio","nombre_municipio"])
+
+
+def get_departamentos(df_mun: _pd.DataFrame) -> list[dict]:
+    """Lista de dicts {cod, nombre} ordenada por nombre."""
+    if df_mun.empty:
+        return []
+    return (
+        df_mun[["cod_depto","nombre_depto"]]
+        .drop_duplicates()
+        .sort_values("nombre_depto")
+        .rename(columns={"cod_depto":"cod","nombre_depto":"nombre"})
+        .to_dict("records")
+    )
+
+
+def get_municipios(df_mun: _pd.DataFrame, cod_depto: str) -> list[dict]:
+    """Lista de dicts {cod, nombre} para el departamento dado."""
+    if df_mun.empty or not cod_depto:
+        return []
+    sub = df_mun[df_mun["cod_depto"] == cod_depto].sort_values("nombre_municipio")
+    return sub[["cod_municipio","nombre_municipio"]].rename(
+        columns={"cod_municipio":"cod","nombre_municipio":"nombre"}
+    ).to_dict("records")
 
 TIPOS_DOC    = ["Seleccionar...", "CC", "CE", "PA", "RC", "TI"]
 TIPOS_MUESTRA= ["Seleccionar...", "CORDON", "TALON", "VENA"]
