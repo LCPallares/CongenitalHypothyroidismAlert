@@ -30,10 +30,11 @@ def load_data():
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
-    for col in ["prematuro", "transfundido", "informacion_completa",
-                "muestra_adecuada", "muestra_rechazada"]:
-        if col in df.columns:
-            df[col] = df[col].map({"VERDADERO": True, "FALSO": False})
+    # quitado porque antes los datos fueron convertidos en boolenados, activar cuando sea verdadero/falso
+    # for col in ["prematuro", "transfundido", "informacion_completa",
+    #             "muestra_adecuada", "muestra_rechazada"]:
+    #     if col in df.columns:
+    #         df[col] = df[col].map({"VERDADERO": True, "FALSO": False})
 
     df["tsh_neonatal"]      = pd.to_numeric(df.get("tsh_neonatal", 0), errors="coerce").fillna(0)
     df["resultado_muestra_2"] = pd.to_numeric(df.get("resultado_muestra_2", 0), errors="coerce").fillna(0)
@@ -221,6 +222,7 @@ with t2:
             fig.add_hline(y=tsh_umbral, line_dash="dash", line_color="red")
             fig.update_yaxes(range=[0, 40])
             st.plotly_chart(fig, use_container_width=True)
+
     with c2:
         if "prematuro" in fdf.columns:
             ymax = max(30, fdf["tsh_neonatal"].quantile(0.95))
