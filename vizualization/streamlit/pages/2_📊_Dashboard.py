@@ -100,6 +100,9 @@ tipos_sel = st.sidebar.multiselect("Tipo de Muestra:", tipos, default=tipos)
 deptos = sorted(df["departamento"].dropna().unique().tolist()) if "departamento" in df.columns else []
 deptos_sel = st.sidebar.multiselect("Departamento:", deptos, default=deptos)
 
+ciudades = sorted(df["ciudad"].dropna().unique().tolist()) if "ciudad" in df.columns else []
+ciudades_sel = st.sidebar.multiselect("Ciudad:", ciudades, default=ciudades)
+
 estado_sel = st.sidebar.radio("Estado:", ["Todos", "Sospechosos", "Confirmados", "Normales", "Pendientes"])
 
 st.sidebar.header("⚙️ Configuración")
@@ -119,6 +122,8 @@ if tipos_sel and "tipo_muestra" in fdf.columns:
     fdf = fdf[fdf["tipo_muestra"].isin(tipos_sel)]
 if deptos_sel and "departamento" in fdf.columns:
     fdf = fdf[fdf["departamento"].isin(deptos_sel)]
+if ciudades_sel and "ciudad" in fdf.columns:
+    fdf = fdf[fdf["ciudad"].isin(ciudades_sel)]
 if estado_sel == "Sospechosos":
     fdf = fdf[fdf["sospecha_hipotiroidismo"]]
 elif estado_sel == "Confirmados":
