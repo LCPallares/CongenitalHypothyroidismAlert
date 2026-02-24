@@ -2,10 +2,10 @@
 from datetime import datetime
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 from utils.constantes import CSS, TSH_CORTE, CSV_REGISTROS
+from utils.graficos import fig_tsh_confirmados
 
 st.set_page_config(page_title="Alertas", page_icon="🚨", layout="wide")
 st.markdown(CSS, unsafe_allow_html=True)
@@ -211,11 +211,7 @@ st.download_button("⬇ Descargar CSV",
                    "casos_confirmados.csv", "text/csv")
 
 # Gráfico distribución TSH confirmados
-fig = px.histogram(confirmed_df, x="resultado_muestra_2", nbins=20,
-                   title="Distribución TSH 2ª Muestra (Confirmados)",
-                   labels={"resultado_muestra_2":"TSH 2ª (mIU/L)"},
-                   color_discrete_sequence=["#FF4500"])
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig_tsh_confirmados(confirmed_df), use_container_width=True)
 
 # ── Log SMS ───────────────────────────────────────────────────────────────────
 if st.session_state.get("sms_log"):
