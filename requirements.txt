@@ -4,3 +4,5 @@ pandas
 statsmodels
 plotly
 twilio
+folium
+streamlit_folium
